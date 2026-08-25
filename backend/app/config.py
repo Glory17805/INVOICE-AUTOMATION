@@ -157,6 +157,15 @@ def max_upload_bytes() -> int:
     return int(max(megabytes, 1) * 1024 * 1024)
 
 
+def app_url() -> str:
+    """Where the frontend is reachable, used to build password-reset links.
+
+    The backend never serves the page, so it cannot infer this from a request:
+    the browser's address and the API's address are different by design.
+    """
+    return setting("GST_APP_URL", f"http://127.0.0.1:{setting('GST_FRONTEND_PORT', '3000')}").rstrip("/")
+
+
 def lock_path() -> Path:
     """The file whose lock marks this data directory as claimed."""
     return DATA_DIR / "backend.lock"

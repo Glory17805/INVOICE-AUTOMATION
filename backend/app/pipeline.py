@@ -30,6 +30,33 @@ from .models import DocStatus, DocumentType, ExtractedInvoice, GstTreatment
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".txt", ".csv"}
 
 
+class Stage:
+    """Where a document has got to, for the progress display.
+
+    Distinct from `status`, which is what a *reviewer* needs to act on. Stage is
+    the machine's own progress through the pipeline, so a person watching an
+    upload sees movement instead of an undifferentiated spinner.
+    """
+
+    UPLOADED = "uploaded"
+    READING = "reading"
+    EXTRACTED = "extracted"
+    CHECKED = "checked"
+    DONE = "done"
+    POSTED = "posted"
+    FAILED = "failed"
+
+    # In order, with the words shown on the Processing screen.
+    SEQUENCE = [
+        (UPLOADED, "Invoice received"),
+        (READING, "Reading the document"),
+        (EXTRACTED, "Invoice details extracted"),
+        (CHECKED, "GST rules applied and checked"),
+        (DONE, "Ready for review"),
+        (POSTED, "Written to the workbook"),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Stage 1: capture
 # --------------------------------------------------------------------------- #
@@ -73,6 +100,7 @@ def stage(data: bytes, filename: str, source: str = "upload") -> list[dict]:
             "stored_path": str(stored),
             "source": source,
             "status": DocStatus.NEW.value,
+            "stage": Stage.UPLOADED,
         })]
 
     stem = Path(safe_name).stem
@@ -124,7 +152,13 @@ def process_many(doc_ids: list[str]) -> None:
         except Exception as exc:  # noqa: BLE001 - a background task must not die
             store.update(
                 doc_id,
-                {"status": DocStatus.FAILED.value, "error": f"Could not read this document: {exc}"},
+                {
+                    "status": DocStatus.FAILED.value,
+                    "stage": Stage.FAILED,
+                    "error": f"Could not read this document: {exc}",
+                    "failure_reason": ("Something went wrong while reading this document. "
+                                       "Try again, or upload a different copy of it."),
+                },
                 event="read_failed",
             )
 
@@ -236,11 +270,21 @@ def process(doc_id: str) -> dict:
 
     path = Path(record["stored_path"])
     if not path.exists():
-        return store.update(doc_id, {"status": DocStatus.FAILED.value,
-                                     "error": "The stored file is missing."}, event="read_failed")
+        return store.update(doc_id, {
+            "status": DocStatus.FAILED.value,
+            "stage": Stage.FAILED,
+            "error": "The stored file is missing.",
+        }, event="read_failed")
+
+    # Published before the slow part, so the Processing screen can show that
+    # reading has begun rather than sitting on "received" for a minute.
+    store.update(doc_id, {"stage": Stage.READING})
 
     extracted, reader, reader_note = _read_document(path)
+    store.update(doc_id, {"stage": Stage.EXTRACTED})
+
     treatment, result = evaluate(extracted)
+    store.update(doc_id, {"stage": Stage.CHECKED})
 
     # A document with no text layer is the one case where running offline is a
     # problem with *this* document rather than a background fact - the offline
@@ -261,21 +305,55 @@ def process(doc_id: str) -> dict:
 
     return store.update(doc_id, {
         "status": status.value,
+        "stage": Stage.DONE,
         "reader": reader,
         "reader_note": reader_note,
         "period": period_for(extracted),
         "extracted": extracted.model_dump(mode="json"),
         "treatment": treatment.model_dump(mode="json"),
         "issues": result.as_dicts(),
+        "failure_reason": _failure_reason(result, reader, record["filename"]),
         "error": None,
     }, event=f"read_by_{reader}")
+
+
+def _failure_reason(result: ValidationResult, reader: str, filename: str) -> str | None:
+    """One sentence a person can act on, or None if nothing is blocking.
+
+    The issues list is precise and complete, which is right for a reviewer
+    working through a document and wrong for a screen that has to say, in one
+    line, why this did not go through. This picks the cause rather than listing
+    the symptoms.
+    """
+    blocking = result.blocking
+    if not blocking:
+        return None
+
+    codes = {issue.code for issue in blocking}
+    if "no_text_layer" in codes:
+        return (f"{filename} is a scan or a photograph with no text in it, so the offline "
+                f"reader had nothing to work from. Reading it needs the Claude reader.")
+    if "invoice_date_missing" in codes:
+        return ("No invoice date could be read, and the date decides which return period "
+                "this belongs to.")
+    if "invoice_no_missing" in codes:
+        return "No invoice number could be read off the document."
+    if "duplicate_invoice" in codes:
+        return "This invoice number is already posted in this return period."
+    if codes & {"gstin_checksum", "gstin_format", "gstin_state", "gstin_missing"}:
+        return "The GSTIN on this document did not check out - likely a misread character."
+    if "tax_mismatch" in codes:
+        return "The tax printed on the document does not match the tax its own figures imply."
+    if "taxable_value" in codes:
+        return "No taxable value could be read off the document."
+    return blocking[0].message
 
 
 # --------------------------------------------------------------------------- #
 # Stage 6: write and notify
 # --------------------------------------------------------------------------- #
 
-def revise(doc_id: str, edits: dict) -> dict:
+def revise(doc_id: str, edits: dict, actor: dict | None = None) -> dict:
     """Apply a reviewer's corrections and re-run rules and validation."""
     record = store.get(doc_id)
     if record is None:
@@ -288,14 +366,16 @@ def revise(doc_id: str, edits: dict) -> dict:
 
     return store.update(doc_id, {
         "status": _status_for(result).value,
+        "stage": Stage.DONE,
         "period": period_for(doc),
         "extracted": doc.model_dump(mode="json"),
         "treatment": treatment.model_dump(mode="json"),
         "issues": result.as_dicts(),
-    }, event="revised")
+        "failure_reason": _failure_reason(result, record.get("reader") or "", record["filename"]),
+    }, event="revised", actor=actor)
 
 
-def confirm(doc_id: str, *, override: bool = False) -> dict:
+def confirm(doc_id: str, *, override: bool = False, actor: dict | None = None) -> dict:
     """Post a document to its register.
 
     `override` lets a reviewer post a document that still carries a blocking
@@ -316,7 +396,9 @@ def confirm(doc_id: str, *, override: bool = False) -> dict:
             "status": DocStatus.NEEDS_REVIEW.value,
             "issues": result.as_dicts(),
             "treatment": treatment.model_dump(mode="json"),
-        }, event="post_blocked")
+            "failure_reason": _failure_reason(result, record.get("reader") or "",
+                                              record["filename"]),
+        }, event="post_blocked", actor=actor)
         raise ValueError("; ".join(issue.message for issue in result.blocking))
 
     period = period_for(doc)
@@ -340,6 +422,7 @@ def confirm(doc_id: str, *, override: bool = False) -> dict:
 
     return store.update(doc_id, {
         "status": DocStatus.POSTED.value,
+        "stage": Stage.POSTED,
         "issues": result.as_dicts(),
         "treatment": treatment.model_dump(mode="json"),
         "sheet": sheet,
@@ -347,10 +430,16 @@ def confirm(doc_id: str, *, override: bool = False) -> dict:
         "period": period,
         "archived_path": str(archived) if archived else None,
         "posted_override": bool(override and not result.ok),
-    }, event="posted_with_override" if (override and not result.ok) else "posted")
+        "failure_reason": None,
+        # Who stands behind this row. An override in particular is a deliberate
+        # human decision to file something that failed a check, and an auditor
+        # asking "who approved this?" deserves an answer.
+        "posted_by": (actor or {}).get("email"),
+        "posted_by_name": (actor or {}).get("name"),
+    }, event="posted_with_override" if (override and not result.ok) else "posted", actor=actor)
 
 
-def unpost(doc_id: str) -> dict:
+def unpost(doc_id: str, actor: dict | None = None) -> dict:
     """Undo a posting: clear the workbook row and return the document to review."""
     record = store.get(doc_id)
     if record is None:
@@ -367,10 +456,13 @@ def unpost(doc_id: str) -> dict:
 
     return store.update(doc_id, {
         "status": DocStatus.NEEDS_REVIEW.value,
+        "stage": Stage.DONE,
         "sheet": None,
         "row": None,
         "archived_path": None,
-    }, event="unposted")
+        "posted_by": None,
+        "posted_by_name": None,
+    }, event="unposted", actor=actor)
 
 
 def _archive(source: Path, period: str, sheet: str, row: int, filename: str) -> Path | None:

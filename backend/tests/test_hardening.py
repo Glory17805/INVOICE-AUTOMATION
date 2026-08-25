@@ -8,96 +8,334 @@ pinned by the behaviour that would otherwise fail silently.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import pipeline, singleton, store, workbook
+from fastapi import Depends
+
+from app import accounts, auth, db, pipeline, singleton, store, workbook
 from app.config import IRA_INNOVATIONS
 from app.models import DocStatus, DocumentType
-from app.security import ApiKeyMiddleware
 
 from .test_gst import invoice
 from .test_workbook import PERIOD
 
 
 # --------------------------------------------------------------------------- #
-# Authentication
+# Accounts
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def isolated_accounts(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
+    monkeypatch.setattr("app.db.STORE_PATH", tmp_path / "store.json")
+    db.forget()
+    store._prepared.clear()
+    auth.reset_throttle()
+    yield tmp_path
+    db.forget()
+    store._prepared.clear()
+
+
+def test_a_password_verifies_only_against_itself():
+    stored = accounts.hash_password("a decent long password")
+    assert accounts.verify_password("a decent long password", stored)
+    assert not accounts.verify_password("a decent long passwore", stored)
+
+
+def test_the_same_password_hashes_differently_each_time():
+    """Per-password salt: two people with the same password must not be
+    visibly identical in the database."""
+    assert accounts.hash_password("shared password") != accounts.hash_password("shared password")
+
+
+def test_a_short_password_is_refused(isolated_accounts):
+    with pytest.raises(accounts.AccountError, match="10 characters"):
+        accounts.create_user("a@b.com", "A", "short")
+
+
+def test_creating_and_finding_a_user(isolated_accounts):
+    created = accounts.create_user("Priya@Example.com", "Priya", "a decent long password")
+    assert created["role"] == "user"
+    assert created["is_active"] is True
+    # Email is the login, and nobody remembers their own capitalisation.
+    assert accounts.find_by_email("priya@example.com")["id"] == created["id"]
+    # The hash never leaves the module.
+    assert "password_hash" not in created
+
+
+def test_a_duplicate_email_is_refused(isolated_accounts):
+    accounts.create_user("a@b.com", "A", "a decent long password")
+    with pytest.raises(accounts.AccountError, match="already exists"):
+        accounts.create_user("A@B.com", "Another", "a decent long password")
+
+
+def test_authentication_accepts_the_right_password(isolated_accounts):
+    accounts.create_user("a@b.com", "A", "a decent long password")
+    assert accounts.authenticate("a@b.com", "a decent long password")["email"] == "a@b.com"
+
+
+def test_a_wrong_password_and_an_unknown_account_are_indistinguishable(isolated_accounts):
+    """Different messages would turn this into a way to discover who has an
+    account here."""
+    accounts.create_user("a@b.com", "A", "a decent long password")
+
+    with pytest.raises(accounts.AccountError) as wrong:
+        accounts.authenticate("a@b.com", "not the password")
+    with pytest.raises(accounts.AccountError) as unknown:
+        accounts.authenticate("nobody@b.com", "not the password")
+
+    assert str(wrong.value) == str(unknown.value)
+
+
+def test_a_disabled_account_cannot_sign_in(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    accounts.update_user(user["id"], is_active=False)
+
+    with pytest.raises(accounts.AccountError, match="disabled"):
+        accounts.authenticate("a@b.com", "a decent long password")
+
+
+# --------------------------------------------------------------------------- #
+# Sessions
+# --------------------------------------------------------------------------- #
+
+def test_a_session_token_resolves_to_its_user(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    assert accounts.user_for_token(token)["id"] == user["id"]
+
+
+def test_the_raw_token_is_never_stored(isolated_accounts):
+    """A copy of the database must not be a set of live sessions."""
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    with db.connect() as c:
+        stored = [row["token_hash"] for row in c.execute("SELECT token_hash FROM sessions")]
+    assert token not in stored
+
+
+def test_logging_out_ends_the_session(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    accounts.close_session(token)
+    assert accounts.user_for_token(token) is None
+
+
+def test_an_unknown_token_resolves_to_nobody(isolated_accounts):
+    assert accounts.user_for_token("not-a-real-token") is None
+    assert accounts.user_for_token("") is None
+
+
+def test_changing_a_password_ends_every_session(isolated_accounts):
+    """The point of changing it after a scare."""
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    accounts.set_password(user["id"], "a different long password")
+    assert accounts.user_for_token(token) is None
+
+
+def test_disabling_an_account_ends_its_sessions(isolated_accounts):
+    accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    accounts.update_user(user["id"], is_active=False)
+    assert accounts.user_for_token(token) is None
+
+
+# --------------------------------------------------------------------------- #
+# Password reset
+# --------------------------------------------------------------------------- #
+
+def test_a_reset_token_sets_a_new_password(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token, _ = accounts.begin_reset("a@b.com")
+    accounts.complete_reset(token, "a brand new long password")
+    assert accounts.authenticate("a@b.com", "a brand new long password")["id"] == user["id"]
+
+
+def test_a_reset_token_works_only_once(isolated_accounts):
+    accounts.create_user("a@b.com", "A", "a decent long password")
+    token, _ = accounts.begin_reset("a@b.com")
+    accounts.complete_reset(token, "a brand new long password")
+    with pytest.raises(accounts.AccountError, match="expired or has already been used"):
+        accounts.complete_reset(token, "yet another long password")
+
+
+def test_resetting_an_unknown_address_yields_nothing(isolated_accounts):
+    """The route must answer identically either way; this is the half that
+    makes that possible without inventing a token."""
+    assert accounts.begin_reset("nobody@example.com") is None
+
+
+def test_a_reset_ends_existing_sessions(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    reset_token, _ = accounts.begin_reset("a@b.com")
+    accounts.complete_reset(reset_token, "a brand new long password")
+    assert accounts.user_for_token(token) is None
+
+
+# --------------------------------------------------------------------------- #
+# Roles, and not locking everyone out
+# --------------------------------------------------------------------------- #
+
+def test_the_last_administrator_cannot_be_demoted(isolated_accounts):
+    boss = accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    accounts.create_user("a@b.com", "A", "a decent long password")
+    with pytest.raises(accounts.AccountError, match="only active administrator"):
+        accounts.update_user(boss["id"], role="user")
+
+
+def test_the_last_administrator_cannot_be_disabled(isolated_accounts):
+    boss = accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    with pytest.raises(accounts.AccountError, match="only active administrator"):
+        accounts.update_user(boss["id"], is_active=False)
+
+
+def test_the_last_administrator_cannot_be_deleted(isolated_accounts):
+    boss = accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    with pytest.raises(accounts.AccountError, match="only administrator"):
+        accounts.delete_user(boss["id"])
+
+
+def test_an_administrator_can_be_demoted_once_there_is_another(isolated_accounts):
+    first = accounts.create_user("one@b.com", "One", "a decent long password", role="admin")
+    accounts.create_user("two@b.com", "Two", "a decent long password", role="admin")
+    assert accounts.update_user(first["id"], role="user")["role"] == "user"
+
+
+# --------------------------------------------------------------------------- #
+# Route guards
 # --------------------------------------------------------------------------- #
 
 def _guarded_app() -> FastAPI:
-    """A minimal app behind the same middleware the real one uses."""
     app = FastAPI()
-    app.add_middleware(ApiKeyMiddleware)
 
-    @app.get("/api/health")
-    def health():
-        return {"status": "ok"}
+    @app.get("/api/open")
+    def open_route():
+        return {"ok": True}
 
-    @app.get("/api/secret")
-    def secret():
-        return {"value": 42}
+    @app.get("/api/private")
+    def private(user: dict = Depends(auth.require_user)):
+        return {"as": user["email"]}
+
+    @app.get("/api/admin-only")
+    def admin_only(user: dict = Depends(auth.require_admin)):
+        return {"as": user["email"]}
 
     return app
 
 
 @pytest.fixture
-def guarded(monkeypatch):
-    monkeypatch.setenv("GST_API_KEY", "correct-horse-battery-staple")
+def client(isolated_accounts):
     return TestClient(_guarded_app())
 
 
-@pytest.fixture
-def unguarded(monkeypatch):
-    monkeypatch.setenv("GST_API_KEY", "")
-    monkeypatch.setattr("app.security.api_key", lambda: "")
-    return TestClient(_guarded_app())
+def _bearer(token):
+    return {"Authorization": f"Bearer {token}"}
 
 
-def test_no_key_configured_leaves_the_api_open(unguarded):
-    """Someone running both halves on their own machine is not asked to log in."""
-    assert unguarded.get("/api/secret").status_code == 200
+def test_an_anonymous_request_is_refused(client):
+    assert client.get("/api/private").status_code == 401
 
 
-def test_a_request_without_a_key_is_refused(guarded):
-    response = guarded.get("/api/secret")
-    assert response.status_code == 401
-    assert "X-API-Key" in response.json()["detail"]
-
-
-def test_a_request_with_the_wrong_key_is_refused(guarded):
-    assert guarded.get("/api/secret", headers={"X-API-Key": "guess"}).status_code == 401
-
-
-def test_a_request_with_the_right_key_is_allowed(guarded):
-    response = guarded.get("/api/secret", headers={"X-API-Key": "correct-horse-battery-staple"})
+def test_a_signed_in_user_is_allowed(client):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    response = client.get("/api/private", headers=_bearer(token))
     assert response.status_code == 200
-    assert response.json() == {"value": 42}
+    assert response.json() == {"as": "a@b.com"}
 
 
-def test_a_bearer_token_is_accepted_too(guarded):
-    """So curl and Postman work without special-casing this API."""
-    response = guarded.get(
-        "/api/secret", headers={"Authorization": "Bearer correct-horse-battery-staple"}
-    )
+def test_a_plain_user_is_refused_an_admin_route(client):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    response = client.get("/api/admin-only", headers=_bearer(token))
+    assert response.status_code == 403
+    assert "administrator" in response.json()["detail"]
+
+
+def test_an_administrator_is_allowed(client):
+    boss = accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
+    token = accounts.open_session(boss["id"])
+    assert client.get("/api/admin-only", headers=_bearer(token)).status_code == 200
+
+
+def test_a_stale_token_is_refused(client):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    token = accounts.open_session(user["id"])
+    accounts.close_session(token)
+    assert client.get("/api/private", headers=_bearer(token)).status_code == 401
+
+
+def test_the_service_key_authenticates_as_a_service(client, monkeypatch):
+    """Scripts need a way in that is not a person's password - and the audit
+    trail has to be able to tell the difference."""
+    monkeypatch.setattr("app.auth.api_key", lambda: "a-service-key")
+    response = client.get("/api/admin-only", headers=_bearer("a-service-key"))
     assert response.status_code == 200
+    assert response.json() == {"as": "service-key"}
 
 
-def test_health_is_reachable_without_a_key(guarded):
-    """A liveness probe cannot be expected to hold credentials."""
-    assert guarded.get("/api/health").status_code == 200
+def test_no_service_key_configured_means_that_value_is_not_special(client, monkeypatch):
+    monkeypatch.setattr("app.auth.api_key", lambda: "")
+    assert client.get("/api/private", headers=_bearer("")).status_code == 401
 
 
-def test_a_preflight_is_not_blocked(guarded):
-    """The browser sends OPTIONS before it will attach a custom header, so
-    rejecting preflights would break every authenticated call from the page."""
-    assert guarded.options("/api/secret").status_code != 401
+# --------------------------------------------------------------------------- #
+# Login throttling
+# --------------------------------------------------------------------------- #
+
+def test_repeated_failures_start_imposing_a_wait(isolated_accounts):
+    """A secret on an open port invites guessing; nothing else slows it down."""
+    request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.1"))
+
+    assert auth.retry_after("a@b.com", request) == 0
+    for _ in range(5):
+        auth.note_failure("a@b.com", request)
+    assert auth.retry_after("a@b.com", request) > 0
 
 
-def test_the_key_is_not_accepted_from_the_query_string(guarded):
-    """Query strings end up in history, proxy logs and referrer headers."""
-    assert guarded.get("/api/secret?key=correct-horse-battery-staple").status_code == 401
+def test_a_successful_login_clears_the_count(isolated_accounts):
+    request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.1"))
+    for _ in range(5):
+        auth.note_failure("a@b.com", request)
+    auth.clear_failures("a@b.com", request)
+    assert auth.retry_after("a@b.com", request) == 0
+
+
+def test_throttling_is_per_account_not_global(isolated_accounts):
+    """One person fat-fingering their password must not lock out a colleague."""
+    request = SimpleNamespace(client=SimpleNamespace(host="10.0.0.1"))
+    for _ in range(6):
+        auth.note_failure("victim@b.com", request)
+    assert auth.retry_after("victim@b.com", request) > 0
+    assert auth.retry_after("someone-else@b.com", request) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Audit trail
+# --------------------------------------------------------------------------- #
+
+def test_actions_are_recorded_against_the_person(isolated_accounts):
+    user = accounts.create_user("a@b.com", "A", "a decent long password")
+    accounts.record(user, "posted", {"document": "abc123"})
+
+    entry = accounts.activity(10)[0]
+    assert entry["action"] == "posted"
+    assert entry["user_email"] == "a@b.com"
+    assert "abc123" in entry["detail"]
+
+
+def test_a_broken_audit_write_never_breaks_the_action(isolated_accounts, monkeypatch):
+    """Logging that something happened must not stop it happening."""
+    monkeypatch.setattr(db, "connect", lambda: (_ for _ in ()).throw(RuntimeError("disk gone")))
+    accounts.record({"id": "x", "email": "a@b.com"}, "posted")   # must not raise
 
 
 # --------------------------------------------------------------------------- #
@@ -149,12 +387,17 @@ def isolated_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "INCOMING_DIR", tmp_path / "incoming")
     monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
+    monkeypatch.setattr("app.db.STORE_PATH", tmp_path / "store.json")
     monkeypatch.setattr(workbook, "WORKBOOK_DIR", tmp_path / "workbook")
     # Force the offline reader: these tests are about sequencing, and should
     # not depend on a network round trip or spend a model call.
     monkeypatch.setattr(pipeline, "has_credentials", lambda: False)
+    db.forget()
+    store._prepared.clear()
     (tmp_path / "incoming").mkdir(parents=True, exist_ok=True)
-    return tmp_path
+    yield tmp_path
+    db.forget()
+    store._prepared.clear()
 
 
 # Label on one line, value on the next: the layout a PDF text layer produces,
@@ -293,8 +536,11 @@ def test_the_tax_position_is_recomputed_after_a_posting(cached_workbook):
 @pytest.fixture
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
+    monkeypatch.setattr("app.db.STORE_PATH", tmp_path / "store.json")
+    db.forget()
     store._prepared.clear()
     yield tmp_path
+    db.forget()
     store._prepared.clear()
 
 
