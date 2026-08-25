@@ -110,7 +110,11 @@ PROVIDERS = ("claude", "gemini")
 
 DEFAULT_MODELS = {
     "claude": "claude-opus-5",
-    "gemini": "gemini-2.5-flash",
+    # Verified against a live free-tier key: 2.5-flash is refused for new
+    # users ("no longer available"), and the model list still advertises it,
+    # so the list is not a safe source. 3.6-flash is what the API itself
+    # points new keys at, and it honours the response schema.
+    "gemini": "gemini-3.6-flash",
 }
 
 
@@ -134,6 +138,41 @@ def extraction_provider() -> str:
 
 def gemini_key() -> str:
     return setting("GEMINI_API_KEY") or setting("GOOGLE_API_KEY")
+
+
+def gemini_tier() -> str:
+    """Whether this Gemini key is on the free tier or a paid one.
+
+    This has to be declared, because it cannot be detected: an AI Studio key is
+    the same string whether or not billing is enabled on its project, and the
+    API exposes no "which tier am I" endpoint. The default is "free" on
+    purpose - the conservative assumption is the one where the data is at risk,
+    so an operator who has not thought about it gets the warning rather than
+    silence.
+
+    It matters because Google may use free-tier inputs to improve their models,
+    and the inputs here are a real company's invoices: named counterparties,
+    GSTINs, amounts.
+    """
+    declared = setting("GST_GEMINI_TIER", "free").lower()
+    return "paid" if declared in ("paid", "billed", "vertex") else "free"
+
+
+def training_risk() -> str | None:
+    """A one-line warning when invoice data may be used to train a model.
+
+    Returns None when there is nothing to warn about, so callers can treat a
+    value as "show this".
+    """
+    if extraction_provider() != "gemini" or not gemini_key():
+        return None
+    if gemini_tier() == "paid":
+        return None
+    return (
+        "Gemini free tier: Google may use these invoices to improve their models. "
+        "Do not use it for a real client's filings - set GST_GEMINI_TIER=paid in "
+        "backend/.env once billing is enabled, or switch provider."
+    )
 
 
 def gemini_model() -> str:

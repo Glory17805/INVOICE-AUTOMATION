@@ -25,6 +25,7 @@ from . import accounts, appsettings, auth, pipeline, singleton, store, workbook
 from . import period as periods
 from .auth import require_admin, require_user
 from .config import (
+    extraction_provider, gemini_tier, training_risk,
     DATA_DIR, api_key, app_url, approval_mode, credential_source, ensure_dirs, extraction_model,
     frontend_origins, has_credentials, lock_path, max_upload_bytes,
 )
@@ -287,7 +288,10 @@ def info(user: dict = Depends(require_user)) -> dict:
 
     return {
         **workbook.workbook_info(),
-        "reader": "claude" if has_credentials() else "heuristic",
+        "reader": extraction_provider() if has_credentials() else "heuristic",
+        "provider": extraction_provider(),
+        "provider_tier": gemini_tier() if extraction_provider() == "gemini" else None,
+        "training_risk": training_risk(),
         "reader_effective": last_read.get("reader") if last_read else None,
         "reader_note": last_read.get("reader_note") if last_read else None,
         "model": extraction_model() if has_credentials() else None,
@@ -839,7 +843,9 @@ def admin_stats(user: dict = Depends(require_admin)) -> dict:
         },
         "failed_jobs": failures[:25],
         "overrides": overrides[:25],
-        "reader": "claude" if has_credentials() else "heuristic",
+        "reader": extraction_provider() if has_credentials() else "heuristic",
+        "provider": extraction_provider(),
+        "training_risk": training_risk(),
         "periods": workbook.available_periods(),
         "data_dir": str(DATA_DIR),
     }

@@ -14,7 +14,7 @@ const url = (path) => `${API}${path}`;
 const state = {
   info: null,
   documents: [],
-  screen: "inbox",
+  screen: "dashboard",
   period: null,
   reviewId: null,
   register: "sales",
@@ -22,6 +22,13 @@ const state = {
   selected: new Set(),
   editing: false,
   busy: false,
+
+  // The batch the Processing screen is watching, and the History screen's
+  // current search - both survive navigating away and back.
+  lastBatch: [],
+  historyQuery: "",
+  historyFilter: "",
+  settings: {},
 };
 
 // --------------------------------------------------------------------------- //
@@ -115,16 +122,35 @@ function alertBox(kind, children) {
 // API
 // --------------------------------------------------------------------------- //
 
-/* The shared secret, if this deployment uses one. Like the API address it
-   arrives from /config.js, so the same built files run against an open local
-   backend and a protected one. */
-const API_KEY = window.GST_API_KEY || "";
+/* The session token.
+
+   Kept in localStorage rather than a cookie: the API is on a different origin,
+   so a cookie would have to be third-party and cross-site - exactly the thing
+   browsers are busy switching off. A token in a header is unambiguous, is never
+   sent anywhere the page did not choose to send it, and needs no CSRF defence
+   because it is not attached automatically. */
+const TOKEN_KEY = "gst.session";
+
+const session = {
+  token: localStorage.getItem(TOKEN_KEY) || "",
+  user: null,
+};
+
+function setToken(token) {
+  session.token = token || "";
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
 
 function authHeaders(extra) {
   const headers = { ...(extra || {}) };
-  if (API_KEY) headers["X-API-Key"] = API_KEY;
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
   return headers;
 }
+
+/* Raised when the backend says the session is no longer good. It is caught at
+   the boundary and turned into a sign-out, so no caller has to remember to. */
+class Unauthenticated extends Error {}
 
 async function request(path, options = {}) {
   let response;
@@ -135,11 +161,18 @@ async function request(path, options = {}) {
     throw new Error(`Cannot reach the backend at ${API}. Is it running?`);
   }
   if (response.status === 401) {
-    throw new Error(
-      API_KEY
-        ? "The backend rejected this frontend's API key. The two GST_API_KEY values do not match."
-        : "The backend requires an API key and this frontend has none. Start it with --api-key."
-    );
+    // Only a session that *was* good and has stopped being good means sign out.
+    // A rejected sign-in attempt is also a 401, and throwing the person back to
+    // a freshly-wiped form would erase the message telling them what was wrong.
+    if (session.token) {
+      setTimeout(() => {
+        signOut({ quiet: true });
+        gateAlert("Your session has ended. Sign in again.", "info");
+      }, 0);
+    }
+    let detail = "Your session has ended. Sign in again.";
+    try { detail = (await response.json()).detail || detail; } catch (_) { /* not JSON */ }
+    throw new Unauthenticated(detail);
   }
   if (!response.ok) {
     let detail = response.statusText;
@@ -221,11 +254,15 @@ async function loadInfo() {
   $("#brand-name").textContent = state.info.company;
   $("#brand-gstin").textContent = state.info.gstin;
 
-  /* Three states, not two. Holding a key is not the same as Claude answering:
-     an expired key, an exhausted balance or a dropped network all fall back to
-     the offline reader. Saying "Claude reader" through that would be telling
-     someone their invoices were read by a model that never saw them. */
-  const configured = state.info.reader === "claude";
+  /* Three states, not two. Holding a key is not the same as the model
+     answering: an expired key, an exhausted balance or a dropped network all
+     fall back to the offline reader. Naming the configured provider through
+     that would tell someone their invoices were read by a model that never
+     saw them. */
+  const PROVIDER_NAMES = { claude: "Claude", gemini: "Gemini", heuristic: "Offline" };
+  const provider = state.info.provider || state.info.reader;
+  const readerName = PROVIDER_NAMES[provider] || provider || "Offline";
+  const configured = provider && provider !== "heuristic";
   const effective = state.info.reader_effective;
   const degraded = configured && effective === "heuristic";
 
@@ -235,32 +272,50 @@ async function loadInfo() {
   if (!configured) {
     dot.className = "dot warn";
     label.textContent = "Offline reader";
-    label.title = "No API key configured. Text-layer PDFs are read in full; scans cannot be read. "
-      + "Add ANTHROPIC_API_KEY to backend/.env — no restart needed.";
+    label.title = "No reader key configured. Text-layer PDFs are read in full; scans cannot "
+      + "be read. Add a key to backend/.env — no restart needed.";
   } else if (degraded) {
     dot.className = "dot warn";
-    label.textContent = "Claude unavailable";
+    label.textContent = `${readerName} unavailable`;
     label.title = state.info.reader_note
       ? `Falling back to the offline reader. ${state.info.reader_note}`
       : "Falling back to the offline reader.";
   } else {
     dot.className = "dot";
-    label.textContent = "Claude reader";
-    label.title = `Reading with ${state.info.model}.`;
+    label.textContent = `${readerName} reader`;
+    label.title = `Reading with ${state.info.model}.`
+      + (state.info.provider_tier ? ` (${state.info.provider_tier} tier)` : "");
   }
 
   const banner = $("#reader-banner");
   if (banner) {
-    banner.hidden = !degraded;
-    if (degraded) {
-      banner.textContent = "";
+    banner.textContent = "";
+
+    /* Where the client's invoices go is not a footnote. If the reader's free
+       tier may train on what is sent to it, that concerns named counterparties,
+       GSTINs and amounts belonging to a real company - so it is stated on every
+       screen, and it clears when the underlying fact changes rather than when
+       somebody clicks it away. */
+    if (state.info.training_risk) {
       banner.append(alertBox("warning", [
-        el("strong", { textContent: "Claude could not be reached, so invoices are being read offline. " }),
+        el("strong", { textContent: "Invoice data may be used to train the reader's model. " }),
+        state.info.training_risk,
+        el("div", { className: "banner-note" },
+          "Set GST_GEMINI_TIER=paid in backend/.env once billing is enabled on the key, "
+          + "or switch to Claude, before putting real client invoices through this."),
+      ]));
+    }
+
+    if (degraded) {
+      banner.append(alertBox("warning", [
+        el("strong", { textContent: `${readerName} could not be reached, so invoices are being read offline. ` }),
         state.info.reader_note || "",
         " Scans and photos cannot be read at all this way, and text-layer PDFs get a "
         + "simpler read that is worth checking.",
       ]));
     }
+
+    banner.hidden = !banner.childNodes.length;
   }
 
   renderPeriods();
@@ -631,6 +686,62 @@ function renderReview() {
   ]);
 
   body.append(el("div", { className: "review-grid" }, [left, right]));
+
+  /* The item table, when the reader found one. It is read-only on purpose: the
+     register takes one row per invoice, so the lines are here to check the
+     total against, not to be edited into it. Editing them would imply they
+     drive something they do not. */
+  const lines = (extracted.line_items || []).filter((line) => line && (
+    line.description || line.taxable_value != null || line.quantity != null));
+
+  if (lines.length) {
+    const rows = el("tbody");
+    for (const line of lines) {
+      rows.append(el("tr", {}, [
+        el("td", { textContent: line.description || "—" }),
+        el("td", { textContent: line.hsn_sac || "—" }),
+        el("td", { className: "num", textContent: line.quantity != null ? line.quantity : "—" }),
+        el("td", { className: "num", textContent: line.unit_rate != null
+          ? money(line.unit_rate) : "—" }),
+        el("td", { className: "num", textContent: line.gst_rate_percent != null
+          ? `${line.gst_rate_percent}%` : "—" }),
+        el("td", { className: "num", textContent: line.taxable_value != null
+          ? money(line.taxable_value) : "—" }),
+      ]));
+    }
+
+    // Worth showing: if the lines do not add up to the invoice's own taxable
+    // value, that is exactly the sort of misread a reviewer is here to catch.
+    const summed = lines.reduce((total, line) => total + Number(line.taxable_value || 0), 0);
+    const stated = Number(extracted.taxable_value || 0);
+    const drifts = stated > 0 && Math.abs(summed - stated) > 1;
+
+    rows.append(el("tr", { className: `total${drifts ? " bad" : ""}` }, [
+      el("td", { colSpan: 5, textContent: drifts
+        ? "Lines add up to (does not match the invoice total)"
+        : "Lines add up to" }),
+      el("td", { className: "num", textContent: money(summed) }),
+    ]));
+
+    body.append(el("div", { className: "card", style: "margin-top:1rem" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Line items" }),
+        el("span", { className: "grow" }),
+        el("span", { className: "muted", textContent: `${lines.length} line${lines.length === 1 ? "" : "s"}` }),
+      ]),
+      el("div", { className: "table-wrap" }, el("table", { className: "grid lines" }, [
+        el("thead", {}, el("tr", {}, [
+          el("th", { textContent: "Description" }),
+          el("th", { textContent: "HSN / SAC" }),
+          el("th", { className: "num", textContent: "Qty" }),
+          el("th", { className: "num", textContent: "Rate" }),
+          el("th", { className: "num", textContent: "GST" }),
+          el("th", { className: "num", textContent: "Amount" }),
+        ])),
+        rows,
+      ])),
+    ]));
+  }
 }
 
 function row2(label, value) {
@@ -801,55 +912,37 @@ async function reread(docId) {
 
 async function upload(files) {
   if (!files.length) return;
+
+  // Screened here as well as on the server: the server's answer is the one
+  // that counts, but this one arrives before the bytes do.
+  const { good, rejected } = screenFiles(files);
+  for (const reason of rejected) toast(reason, "error");
+  if (!good.length) return;
+
   const form = new FormData();
-  for (const file of files) form.append("files", file);
-  toast(`Uploading ${files.length} file${files.length > 1 ? "s" : ""}…`);
+  for (const file of good) form.append("files", file);
+  toast(`Uploading ${good.length} file${good.length > 1 ? "s" : ""}…`);
+
   try {
     const result = await api("/api/documents", { method: "POST", body: form });
     if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
 
-    const n = result.captured.length;
-    if (n) toast(`${n} invoice${n > 1 ? "s" : ""} captured — reading…`);
-    await refresh();
-    await followReading(result.captured.map((doc) => doc.id));
+    const ids = result.captured.map((doc) => doc.id);
+    if (!ids.length) return;
+
+    state.lastBatch = ids;
+    toast(`${ids.length} invoice${ids.length > 1 ? "s" : ""} captured — reading…`);
+
+    // Straight to the progress view: an upload that vanishes into a list is
+    // the thing this screen exists to avoid.
+    show("processing");
+    await loadDocuments();
   } catch (err) {
     toast(err.message, "error");
     await refresh();
   }
 }
 
-/* The upload answers as soon as the documents exist; the backend reads them
-   afterwards. Watch them out of `new` so the inbox fills in as each invoice
-   lands, instead of showing a complete-looking but unread list. */
-async function followReading(ids) {
-  if (!ids.length) return;
-
-  const pending = new Set(ids);
-  // A generous ceiling: a large print run is one model call per invoice. It
-  // exists so a backend that dies mid-batch cannot leave this polling forever.
-  const deadline = Date.now() + 15 * 60 * 1000;
-
-  while (pending.size && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    try {
-      await loadDocuments();
-    } catch (_) {
-      continue;   // a blip on one poll should not abandon the batch
-    }
-
-    const byId = new Map(state.documents.map((doc) => [doc.id, doc]));
-    for (const id of [...pending]) {
-      const doc = byId.get(id);
-      if (!doc || doc.status !== "new") pending.delete(id);
-    }
-    if (state.screen === "inbox") renderInbox();
-  }
-
-  await refresh();
-  const read = ids.length - pending.size;
-  if (pending.size) toast(`Read ${read} of ${ids.length}. The rest are still going.`, "warning");
-  else toast(`Read ${ids.length} invoice${ids.length > 1 ? "s" : ""}.`, "good");
-}
 
 // --------------------------------------------------------------------------- //
 // Screen 3: Registers
@@ -1016,27 +1109,57 @@ function taxRow(label, values) {
 // Navigation
 // --------------------------------------------------------------------------- //
 
-const SCREENS = ["inbox", "review", "registers", "tax"];
+const SCREENS = [
+  "dashboard", "upload", "processing", "queue", "review",
+  "history", "registers", "tax", "email", "settings", "admin",
+];
+
+/* The nav has no Processing button - it is somewhere the app sends you after
+   an upload, not somewhere you choose to go. */
+const NAV_SCREENS = SCREENS.filter((name) => name !== "processing");
 
 /* Hash routing, so a screen survives a refresh and can be linked to. */
 function screenFromHash() {
   const name = (location.hash || "").replace(/^#\/?/, "").split("/")[0];
-  return SCREENS.includes(name) ? name : "inbox";
+  return SCREENS.includes(name) ? name : "dashboard";
 }
 
 function show(name, { push = true } = {}) {
+  if (!SCREENS.includes(name)) name = "dashboard";
+  if (name === "admin" && !isAdmin()) {
+    toast("That needs an administrator account.", "error");
+    name = "dashboard";
+  }
+
   state.screen = name;
   if (push && screenFromHash() !== name) location.hash = `#/${name}`;
   for (const button of document.querySelectorAll("#nav button")) {
-    if (button.dataset.screen === name) button.setAttribute("aria-current", "page");
+    const active = button.dataset.screen === name
+      || (name === "processing" && button.dataset.screen === "upload");
+    if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
-  for (const id of ["inbox", "review", "registers", "tax"]) $(`#screen-${id}`).hidden = id !== name;
+  for (const id of SCREENS) $(`#screen-${id}`).hidden = id !== name;
 
-  if (name === "inbox") renderInbox();
-  if (name === "review") renderReview();
-  if (name === "registers") renderRegisters();
-  if (name === "tax") renderTax();
+  // The period picker only means something on the two screens that read the
+  // workbook; showing it everywhere invites people to change it expecting
+  // something to happen.
+  $(".context").hidden = !["registers", "tax", "dashboard"].includes(name);
+
+  const renderers = {
+    dashboard: renderDashboard,
+    upload: renderUpload,
+    processing: renderProcessing,
+    queue: renderInbox,
+    review: renderReview,
+    history: renderHistory,
+    registers: renderRegisters,
+    tax: renderTax,
+    email: renderEmail,
+    settings: renderSettings,
+    admin: renderAdmin,
+  };
+  (renderers[name] || renderDashboard)();
 }
 
 async function refresh() {
@@ -1050,21 +1173,21 @@ async function refresh() {
 // --------------------------------------------------------------------------- //
 
 function wire() {
+  $("#gate-form").addEventListener("submit", submitGate);
+
+  $("#btn-logout").addEventListener("click", async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (_) { /* going anyway */ }
+    signOut();
+  });
+  $("#who").addEventListener("click", () => show("settings"));
+
   for (const button of document.querySelectorAll("#nav button")) {
     button.addEventListener("click", () => show(button.dataset.screen));
   }
 
-  const dropzone = $("#dropzone");
   const input = $("#file-input");
-  dropzone.addEventListener("click", () => input.click());
   input.addEventListener("change", () => { upload([...input.files]); input.value = ""; });
-  for (const ev of ["dragenter", "dragover"]) {
-    dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("hot"); });
-  }
-  for (const ev of ["dragleave", "drop"]) {
-    dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("hot"); });
-  }
-  dropzone.addEventListener("drop", (e) => upload([...e.dataTransfer.files]));
+  wireDropzone($("#dropzone"));
 
   $("#period-picker").addEventListener("change", (e) => {
     state.period = e.target.value;
@@ -1072,20 +1195,7 @@ function wire() {
     if (state.screen === "tax") renderTax();
   });
 
-  $("#btn-scan").addEventListener("click", async () => {
-    try {
-      const result = await api("/api/ingest/folder", { method: "POST" });
-      const n = result.captured.length;
-      if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
-      if (!n) { toast("Nothing new in the watch folder."); return; }
-      toast(`${n} invoice${n > 1 ? "s" : ""} picked up — reading…`);
-      await refresh();
-      await followReading(result.captured.map((doc) => doc.id));
-    } catch (err) {
-      toast(err.message, "error");
-      await refresh();
-    }
-  });
+  $("#btn-scan").addEventListener("click", checkWatchFolder);
 
   $("#btn-download").addEventListener("click", () => saveWorkbook(state.period));
 
@@ -1115,19 +1225,1054 @@ function wire() {
   });
 }
 
+// --------------------------------------------------------------------------- //
+// Signing in
+//
+// One card that switches between four jobs: sign in, create the first account,
+// ask for a reset link, and set a new password from one. They share a shape
+// because they are the same moment in the product - you are outside, and you
+// want in.
+// --------------------------------------------------------------------------- //
+
+const gate = { mode: "login", busy: false, resetToken: "" };
+
+function isAdmin() {
+  return (session.user || {}).role === "admin";
+}
+
+function field(name, label, type = "text", extra = {}) {
+  const input = el("input", { type, name, id: `f-${name}`, autocomplete: extra.autocomplete || "on",
+                              placeholder: extra.placeholder || "", required: true });
+  if (extra.value) input.value = extra.value;
+  return el("label", { className: "gate-field" }, [
+    el("span", { textContent: label }),
+    input,
+  ]);
+}
+
+function gateAlert(message, kind = "error") {
+  const box = $("#gate-alert");
+  box.textContent = "";
+  if (message) box.append(alertBox(kind, message));
+}
+
+function renderGate() {
+  $("#shell").hidden = true;
+  $("#gate").hidden = false;
+
+  const form = $("#gate-form");
+  const foot = $("#gate-foot");
+  form.textContent = "";
+  foot.textContent = "";
+
+  const submit = (label) => el("button", {
+    className: "btn primary block", type: "submit",
+    textContent: gate.busy ? "Working…" : label, disabled: gate.busy,
+  });
+
+  const link = (label, mode) => el("button", {
+    className: "linkish", type: "button", textContent: label,
+    onclick: () => { gate.mode = mode; gateAlert(""); renderGate(); },
+  });
+
+  if (gate.mode === "setup") {
+    form.append(
+      el("p", { className: "gate-lede" },
+        "No accounts exist yet. The first one you create is the administrator."),
+      field("name", "Your name", "text", { autocomplete: "name" }),
+      field("email", "Email", "email", { autocomplete: "username" }),
+      field("password", "Password", "password", { autocomplete: "new-password",
+                                                  placeholder: "At least 10 characters" }),
+      submit("Create administrator"),
+    );
+  } else if (gate.mode === "forgot") {
+    form.append(
+      el("p", { className: "gate-lede" },
+        "Enter your email and a reset link will be issued. It expires in an hour."),
+      field("email", "Email", "email", { autocomplete: "username" }),
+      submit("Send reset link"),
+    );
+    foot.append(link("Back to sign in", "login"));
+  } else if (gate.mode === "reset") {
+    form.append(
+      el("p", { className: "gate-lede" }, "Choose a new password."),
+      field("password", "New password", "password", { autocomplete: "new-password",
+                                                      placeholder: "At least 10 characters" }),
+      submit("Set password"),
+    );
+    foot.append(link("Back to sign in", "login"));
+  } else {
+    form.append(
+      field("email", "Email", "email", { autocomplete: "username" }),
+      field("password", "Password", "password", { autocomplete: "current-password" }),
+      submit("Sign in"),
+    );
+    foot.append(link("Forgot your password?", "forgot"));
+  }
+
+  const first = form.querySelector("input");
+  if (first) first.focus();
+}
+
+async function submitGate(event) {
+  event.preventDefault();
+  if (gate.busy) return;
+
+  const data = Object.fromEntries(new FormData(event.target).entries());
+  gate.busy = true;
+  renderGate();
+  gateAlert("");
+
+  try {
+    if (gate.mode === "setup") {
+      const result = await api("/api/auth/signup", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: data.email, name: data.name, password: data.password }),
+      });
+      setToken(result.token);
+      session.user = result.user;
+      await enterApp();
+      return;
+    }
+
+    if (gate.mode === "forgot") {
+      const result = await api("/api/auth/forgot", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: data.email }),
+      });
+      gate.mode = "login";
+      gate.busy = false;
+      renderGate();
+      gateAlert(result.detail + " If no mail server is configured, ask your administrator "
+                + "for the link — it is written to the server log.", "info");
+      return;
+    }
+
+    if (gate.mode === "reset") {
+      await api("/api/auth/reset", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: gate.resetToken, password: data.password }),
+      });
+      gate.mode = "login";
+      gate.busy = false;
+      location.hash = "#/dashboard";
+      renderGate();
+      gateAlert("Password set. Sign in with it.", "good");
+      return;
+    }
+
+    const result = await api("/api/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: data.email, password: data.password }),
+    });
+    setToken(result.token);
+    session.user = result.user;
+    await enterApp();
+  } catch (err) {
+    gate.busy = false;
+    renderGate();
+    gateAlert(err.message);
+  }
+}
+
+function signOut({ quiet = false } = {}) {
+  setToken("");
+  session.user = null;
+  gate.mode = "login";
+  gate.busy = false;
+  renderGate();
+  if (!quiet) gateAlert("You are signed out.", "info");
+}
+
+// --------------------------------------------------------------------------- //
+// Dashboard
+// --------------------------------------------------------------------------- //
+
+function statCard(value, label, tone = "") {
+  return el("div", { className: `stat ${tone}` }, [
+    el("span", { className: "v", textContent: String(value) }),
+    el("span", { className: "k", textContent: label }),
+  ]);
+}
+
+async function renderDashboard() {
+  const body = $("#dashboard-body");
+  body.textContent = "";
+
+  const hour = new Date().getHours();
+  const part = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const who = (session.user || {}).name || "";
+  $("#dash-greeting").textContent = who ? `${part}, ${who.split(" ")[0]}` : "Dashboard";
+
+  let data;
+  try {
+    data = await api("/api/dashboard");
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  const t = data.totals;
+  body.append(el("div", { className: "stats" }, [
+    statCard(t.all, "Invoices in total"),
+    statCard(t.processed, "Posted to the workbook", "good"),
+    statCard(t.needs_review + t.ready, "Waiting on you", (t.needs_review ? "warn" : "")),
+    statCard(t.failed, "Failed", t.failed ? "bad" : ""),
+  ]));
+
+  // Drop target, right where someone lands.
+  const zone = el("div", { className: "dropzone", id: "dash-dropzone" }, [
+    el("div", { className: "big" }, "Drop invoices here, or click to choose files"),
+    el("div", { className: "hint" },
+      `PDF, PNG or JPG · up to ${(state.info || {}).max_upload_mb || 25} MB each`),
+  ]);
+  wireDropzone(zone);
+  body.append(zone);
+
+  if (t.reading) {
+    body.append(alertBox("info", [
+      el("strong", { textContent: `${t.reading} invoice${t.reading > 1 ? "s" : ""} still being read. ` }),
+      "They will appear as each one finishes.",
+    ]));
+  }
+
+  const rows = data.recent || [];
+  const table = el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: "Recent invoices" }),
+      el("span", { className: "grow" }),
+      el("button", { className: "btn sm ghost", textContent: "See all",
+                     onclick: () => show("history") }),
+    ]),
+    rows.length
+      ? historyTable(rows, { compact: true })
+      : el("div", { className: "empty" }, [
+          el("div", { className: "big" }, "Nothing yet"),
+          "Drop an invoice above and it will be read, classified and checked.",
+        ]),
+  ]);
+  body.append(table);
+}
+
+// --------------------------------------------------------------------------- //
+// Upload
+// --------------------------------------------------------------------------- //
+
+function wireDropzone(zone) {
+  const input = $("#file-input");
+  zone.addEventListener("click", () => input.click());
+  for (const ev of ["dragenter", "dragover"]) {
+    zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add("hot"); });
+  }
+  for (const ev of ["dragleave", "drop"]) {
+    zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove("hot"); });
+  }
+  zone.addEventListener("drop", (e) => upload([...e.dataTransfer.files]));
+}
+
+const ACCEPTED = ["pdf", "png", "jpg", "jpeg", "webp", "gif", "txt", "csv"];
+
+/* Checked here as well as on the server. The server's answer is the one that
+   counts; this one is instant and tells you before you wait for an upload. */
+function screenFiles(files) {
+  const limit = ((state.info || {}).max_upload_mb || 25) * 1024 * 1024;
+  const good = [];
+  const rejected = [];
+  for (const file of files) {
+    const extension = (file.name.split(".").pop() || "").toLowerCase();
+    if (!ACCEPTED.includes(extension)) {
+      rejected.push(`${file.name} — not a supported file type.`);
+    } else if (file.size > limit) {
+      rejected.push(`${file.name} — ${(file.size / 1048576).toFixed(1)} MB, over the `
+                    + `${(state.info || {}).max_upload_mb || 25} MB limit.`);
+    } else {
+      good.push(file);
+    }
+  }
+  return { good, rejected };
+}
+
+function renderUpload() {
+  const body = $("#upload-body");
+  body.textContent = "";
+
+  const zone = el("div", { className: "dropzone tall" }, [
+    el("div", { className: "big" }, "Drop invoice files here"),
+    el("div", { className: "hint" }, "or click to choose them"),
+  ]);
+  wireDropzone(zone);
+
+  body.append(
+    zone,
+    el("div", { className: "upload-facts" }, [
+      el("div", {}, [el("span", { className: "k" }, "Accepted"),
+                     el("span", { className: "v" }, "PDF, PNG, JPG, WEBP, GIF, TXT, CSV")]),
+      el("div", {}, [el("span", { className: "k" }, "Maximum size"),
+                     el("span", { className: "v" },
+                        `${(state.info || {}).max_upload_mb || 25} MB per file`)]),
+      el("div", {}, [el("span", { className: "k" }, "Multiple files"),
+                     el("span", { className: "v" }, "Yes — and a print run is split per invoice")]),
+    ]),
+  );
+
+  if (state.lastBatch && state.lastBatch.length) {
+    body.append(el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "Last upload" })]),
+      el("div", { className: "card-body" }, [
+        el("button", { className: "btn sm", textContent: "See how it is getting on",
+                       onclick: () => show("processing") }),
+      ]),
+    ]));
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// Processing
+// --------------------------------------------------------------------------- //
+
+function stepIcon(stepState) {
+  if (stepState === "done") return icon("check", 14);
+  if (stepState === "failed") return icon("alert", 14);
+  if (stepState === "active") return icon("clock", 14);
+  return icon("dot", 14);
+}
+
+async function renderProcessing() {
+  const body = $("#processing-body");
+  body.textContent = "";
+
+  const ids = state.lastBatch || [];
+  if (!ids.length) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, [
+      el("div", { className: "big" }, "Nothing in flight"),
+      "Upload an invoice and its progress will show here.",
+    ])));
+    return;
+  }
+
+  const list = el("div", { className: "proc-list" });
+  body.append(list);
+
+  const draw = (reports) => {
+    list.textContent = "";
+    for (const report of reports) {
+      if (!report) continue;
+      const failed = report.stage === "failed";
+      const steps = el("ol", { className: "steps" });
+      for (const step of report.steps) {
+        steps.append(el("li", { className: `step ${step.state}` },
+          [stepIcon(step.state), el("span", { textContent: step.label })]));
+      }
+
+      const card = el("div", { className: `card proc${failed ? " failed" : ""}` }, [
+        el("header", {}, [
+          el("h2", { textContent: report.filename || report.id }),
+          el("span", { className: "grow" }),
+          el("span", { className: "pct", textContent: failed ? "Failed" : `${report.percent}%` }),
+        ]),
+        el("div", { className: "card-body" }, [
+          el("div", { className: "bar" },
+            el("div", { className: `fill${failed ? " bad" : ""}`,
+                        style: `width:${failed ? 100 : report.percent}%` })),
+          steps,
+          failed || report.failure_reason
+            ? failureBlock(report)
+            : null,
+          report.status && report.status !== "new"
+            ? el("div", { className: "proc-actions" }, [
+                el("button", { className: "btn sm", textContent: "Review this invoice",
+                               onclick: () => openReview(report.id) }),
+              ])
+            : null,
+        ]),
+      ]);
+      list.append(card);
+    }
+  };
+
+  /* Poll while anything is still moving. Each report is fetched on its own so
+     one document that fails does not stop the others being shown. */
+  const done = new Set();
+  for (let tick = 0; tick < 600; tick += 1) {
+    const reports = await Promise.all(ids.map((id) =>
+      api(`/api/documents/${id}/progress`).catch(() => null)));
+    draw(reports);
+
+    for (const report of reports) {
+      if (report && ["done", "posted", "failed"].includes(report.stage)) done.add(report.id);
+    }
+    if (done.size >= ids.length) break;
+    if (state.screen !== "processing") return;   // they navigated away
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  await loadDocuments();
+}
+
+function failureBlock(report) {
+  return el("div", { className: "failure" }, [
+    el("div", { className: "failure-head" }, [icon("alert", 16),
+      el("strong", { textContent: "This invoice could not be processed" })]),
+    el("p", { textContent: report.failure_reason
+      || report.error || "The reason was not recorded." }),
+    el("div", { className: "failure-actions" }, [
+      el("button", { className: "btn sm", textContent: "Try again",
+                     onclick: () => reprocess(report.id) }),
+      el("button", { className: "btn sm ghost", textContent: "Upload a different file",
+                     onclick: () => show("upload") }),
+    ]),
+  ]);
+}
+
+async function reprocess(docId) {
+  try {
+    await api(`/api/documents/${docId}/reprocess`, { method: "POST" });
+    state.lastBatch = [docId];
+    toast("Reading it again…");
+    show("processing");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// History
+// --------------------------------------------------------------------------- //
+
+const HISTORY_FILTERS = [
+  ["", "All"],
+  ["ready,needs_review", "Waiting"],
+  ["posted", "Posted"],
+  ["failed", "Failed"],
+];
+
+function historyTable(rows, { compact = false } = {}) {
+  const head = el("thead", {}, el("tr", {}, [
+    el("th", { textContent: "Invoice" }),
+    el("th", { textContent: "Party" }),
+    el("th", { textContent: "Date" }),
+    compact ? null : el("th", { textContent: "Period" }),
+    el("th", { textContent: "Source" }),
+    el("th", { className: "num", textContent: "Amount" }),
+    el("th", { textContent: "Status" }),
+    el("th", { textContent: "" }),
+  ]));
+
+  const tbody = el("tbody");
+  for (const row of rows) {
+    const actions = el("div", { className: "row-actions" });
+    actions.append(el("button", { className: "btn xs ghost", textContent: "Open",
+                                  onclick: () => openReview(row.id) }));
+    if (row.status === "failed") {
+      actions.append(el("button", { className: "btn xs ghost", textContent: "Retry",
+                                    onclick: () => reprocess(row.id) }));
+    }
+
+    tbody.append(el("tr", { className: row.status === "failed" ? "bad" : "" }, [
+      el("td", {}, [
+        el("div", { className: "cell-main", textContent: row.invoice_number || "—" }),
+        el("div", { className: "cell-sub", textContent: row.filename }),
+      ]),
+      el("td", { textContent: row.party || "—" }),
+      el("td", { textContent: row.invoice_date || "—" }),
+      compact ? null : el("td", { textContent: row.period || "—" }),
+      el("td", {}, el("span", { className: "src", textContent: row.source || "upload" })),
+      el("td", { className: "num", textContent: row.invoice_total != null
+        ? money(row.invoice_total) : "—" }),
+      el("td", {}, statusPill(row.status)),
+      el("td", {}, actions),
+    ]));
+  }
+  return el("div", { className: "table-wrap" }, el("table", { className: "grid" }, [head, tbody]));
+}
+
+async function renderHistory() {
+  const body = $("#history-body");
+  body.textContent = "";
+
+  const controls = el("div", { className: "filters" });
+  const search = el("input", {
+    className: "control search", type: "search", placeholder: "Search invoice, party or file…",
+    value: state.historyQuery || "",
+  });
+  let timer;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { state.historyQuery = search.value; renderHistory(); }, 250);
+  });
+  controls.append(search);
+
+  const chips = el("div", { className: "chips" });
+  for (const [value, label] of HISTORY_FILTERS) {
+    chips.append(el("button", {
+      className: `chip${(state.historyFilter || "") === value ? " on" : ""}`,
+      textContent: label,
+      onclick: () => { state.historyFilter = value; renderHistory(); },
+    }));
+  }
+  controls.append(chips);
+  body.append(controls);
+
+  const params = new URLSearchParams();
+  if (state.historyQuery) params.set("q", state.historyQuery);
+  if (state.historyFilter) params.set("status", state.historyFilter);
+
+  let data;
+  try {
+    data = await api(`/api/documents?${params}`);
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  if (!data.documents.length) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, [
+      el("div", { className: "big" }, "Nothing matches"),
+      state.historyQuery || state.historyFilter
+        ? "Try a different search or filter."
+        : "No invoices have arrived yet.",
+    ])));
+    return;
+  }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: `${data.total} invoice${data.total === 1 ? "" : "s"}` }),
+      el("span", { className: "grow" }),
+      el("button", {
+        className: "btn sm", textContent: "Export the workbook",
+        onclick: () => saveWorkbook(state.period),
+      }),
+    ]),
+    historyTable(data.documents),
+  ]));
+}
+
+// --------------------------------------------------------------------------- //
+// Email intake
+// --------------------------------------------------------------------------- //
+
+async function renderEmail() {
+  const body = $("#email-body");
+  body.textContent = "";
+
+  let data;
+  try {
+    data = await api("/api/email/status");
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  setPip("#pip-email", data.waiting, data.waiting ? "attention" : "");
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: "How invoices arrive" }),
+      el("span", { className: "grow" }),
+      el("span", { className: `pill ${data.connected ? "ready" : "new"}` },
+        [icon(data.connected ? "check" : "clock", 12),
+         data.connected ? "Watch folder active" : "Turned off"]),
+    ]),
+    el("div", { className: "card-body" }, [
+      el("div", { className: "kv" }, [
+        el("span", { className: "k" }, "Mode"),
+        el("span", { className: "v" }, "Watch folder"),
+        el("span", { className: "k" }, "Folder"),
+        el("span", { className: "v mono", textContent: data.folder }),
+        el("span", { className: "k" }, "Waiting to be picked up"),
+        el("span", { className: "v" }, String(data.waiting)),
+      ]),
+      el("div", { className: "row-actions", style: "margin-top:.9rem" }, [
+        el("button", { className: "btn primary", textContent: "Check for new invoices",
+                       onclick: checkWatchFolder }),
+      ]),
+    ]),
+  ]));
+
+  if (data.waiting_files && data.waiting_files.length) {
+    body.append(el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "Sitting in the folder" })]),
+      el("ul", { className: "plain" },
+        data.waiting_files.map((name) => el("li", { className: "mono", textContent: name }))),
+    ]));
+  }
+
+  // Honest about what is not built, rather than a Connected badge that means
+  // nothing. A green tick against a mailbox nobody wired up is worse than
+  // saying plainly that the mail rule is doing the work.
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Direct mailbox connection" })]),
+    el("div", { className: "card-body" }, [
+      alertBox("info", data.mailbox_connector.detail),
+      el("p", { className: "muted" },
+        "A Microsoft 365 or Gmail connector would remove that step. It needs the mailbox "
+        + "invoices actually arrive in, and consent to read it — neither of which this "
+        + "system should guess at."),
+    ]),
+  ]));
+
+  const rules = data.rules || {};
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Processing rules" })]),
+    el("div", { className: "card-body" }, [
+      toggleRow("email_process_pdf_attachments", "Process PDF attachments",
+                rules.process_pdf_attachments),
+      toggleRow("email_mark_processed", "Mark emails once their invoice is captured",
+                rules.mark_processed),
+      toggleRow("email_notify", "Send a notification when processing finishes", rules.notify),
+      el("p", { className: "muted" },
+        "These apply to the mail rule feeding the watch folder. They are saved here so the "
+        + "connector honours them the day it is wired up."),
+    ]),
+  ]));
+}
+
+async function checkWatchFolder() {
+  try {
+    const result = await api("/api/ingest/folder", { method: "POST" });
+    const n = result.captured.length;
+    if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
+    if (!n) { toast("Nothing new in the watch folder."); return; }
+    state.lastBatch = result.captured.map((d) => d.id);
+    toast(`${n} invoice${n > 1 ? "s" : ""} picked up — reading…`);
+    show("processing");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// Settings
+// --------------------------------------------------------------------------- //
+
+function toggleRow(key, label, value) {
+  const input = el("input", { type: "checkbox", id: `set-${key}`, checked: !!value });
+  input.addEventListener("change", () => saveSetting(key, input.checked));
+  if (!isAdmin()) {
+    input.disabled = true;
+    input.title = "Only an administrator can change this.";
+  }
+  return el("label", { className: "toggle", htmlFor: `set-${key}` }, [
+    input, el("span", { textContent: label }),
+  ]);
+}
+
+async function saveSetting(key, value) {
+  try {
+    const result = await api("/api/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: value }),
+    });
+    state.settings = result.values;
+    toast("Saved.", "good");
+  } catch (err) {
+    toast(err.message, "error");
+    renderSettings();
+  }
+}
+
+async function renderSettings() {
+  const body = $("#settings-body");
+  body.textContent = "";
+
+  let data;
+  try {
+    data = await api("/api/settings");
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+  state.settings = data.values;
+  const user = session.user || {};
+
+  // ---- Account -------------------------------------------------------------
+  const nameInput = el("input", { className: "control", value: user.name || "" });
+  const emailInput = el("input", { className: "control", value: user.email || "", type: "email" });
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Your profile" })]),
+    el("div", { className: "card-body form" }, [
+      el("label", {}, [el("span", {}, "Name"), nameInput]),
+      el("label", {}, [el("span", {}, "Email"), emailInput]),
+      el("div", { className: "row-actions" }, [
+        el("button", {
+          className: "btn primary", textContent: "Save profile",
+          onclick: async () => {
+            try {
+              session.user = await api("/api/auth/me", {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: nameInput.value, email: emailInput.value }),
+              });
+              paintIdentity();
+              toast("Profile saved.", "good");
+            } catch (err) { toast(err.message, "error"); }
+          },
+        }),
+      ]),
+    ]),
+  ]));
+
+  // ---- Password ------------------------------------------------------------
+  const currentPw = el("input", { className: "control", type: "password",
+                                  autocomplete: "current-password" });
+  const newPw = el("input", { className: "control", type: "password",
+                              autocomplete: "new-password",
+                              placeholder: "At least 10 characters" });
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Password" })]),
+    el("div", { className: "card-body form" }, [
+      el("label", {}, [el("span", {}, "Current password"), currentPw]),
+      el("label", {}, [el("span", {}, "New password"), newPw]),
+      el("p", { className: "muted" },
+        "Changing this signs out every other device you are signed in on."),
+      el("div", { className: "row-actions" }, [
+        el("button", {
+          className: "btn primary", textContent: "Change password",
+          onclick: async () => {
+            try {
+              const result = await api("/api/auth/password", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ current_password: currentPw.value,
+                                       new_password: newPw.value }),
+              });
+              setToken(result.token);
+              currentPw.value = newPw.value = "";
+              toast("Password changed.", "good");
+            } catch (err) { toast(err.message, "error"); }
+          },
+        }),
+      ]),
+    ]),
+  ]));
+
+  // ---- Invoice processing --------------------------------------------------
+  const currency = el("select", { className: "control" });
+  for (const code of data.options.currency) {
+    currency.append(el("option", { value: code, textContent: code,
+                                   selected: code === data.values.currency }));
+  }
+  currency.addEventListener("change", () => saveSetting("currency", currency.value));
+
+  const dateFormat = el("select", { className: "control" });
+  for (const fmt of data.options.date_format) {
+    dateFormat.append(el("option", { value: fmt, textContent: fmt,
+                                     selected: fmt === data.values.date_format }));
+  }
+  dateFormat.addEventListener("change", () => saveSetting("date_format", dateFormat.value));
+
+  if (!isAdmin()) { currency.disabled = true; dateFormat.disabled = true; }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Invoice processing" })]),
+    el("div", { className: "card-body form" }, [
+      el("label", {}, [el("span", {}, "Currency"), currency]),
+      el("label", {}, [el("span", {}, "Date format"), dateFormat]),
+      toggleRow("auto_post_clean", "Post clean invoices without asking", data.values.auto_post_clean),
+      el("p", { className: "muted" },
+        "Even with that on, nothing reaches the workbook without passing every check. "
+        + "Anything flagged still stops for review."),
+    ]),
+  ]));
+
+  // ---- Notifications -------------------------------------------------------
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Notifications" })]),
+    el("div", { className: "card-body form" }, [
+      toggleRow("notify_on_complete", "When processing finishes", data.values.notify_on_complete),
+      toggleRow("notify_on_review", "When an invoice needs a look", data.values.notify_on_review),
+      toggleRow("notify_on_failure", "When an invoice fails", data.values.notify_on_failure),
+    ]),
+  ]));
+
+  if (!isAdmin()) {
+    body.append(el("p", { className: "muted" },
+      "Some settings are administrator-only and are shown here read-only."));
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// Admin
+// --------------------------------------------------------------------------- //
+
+async function renderAdmin() {
+  const body = $("#admin-body");
+  body.textContent = "";
+  if (!isAdmin()) return;
+
+  let users = [];
+  let stats = null;
+  let log = [];
+  try {
+    [users, stats, log] = await Promise.all([
+      api("/api/admin/users"),
+      api("/api/admin/stats"),
+      api("/api/admin/activity?limit=60"),
+    ]);
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  body.append(el("div", { className: "stats" }, [
+    statCard(stats.users.total, "People"),
+    statCard(stats.documents.total, "Invoices"),
+    statCard(stats.documents.posted || 0, "Posted", "good"),
+    statCard(stats.documents.failed || 0, "Failed", stats.documents.failed ? "bad" : ""),
+  ]));
+
+  // ---- People --------------------------------------------------------------
+  const rows = el("tbody");
+  for (const person of users) {
+    const isSelf = person.id === (session.user || {}).id;
+
+    const roleSelect = el("select", { className: "control tiny" });
+    for (const role of ["user", "admin"]) {
+      roleSelect.append(el("option", { value: role, textContent: role === "admin" ? "Admin" : "User",
+                                       selected: person.role === role }));
+    }
+    roleSelect.addEventListener("change", () =>
+      patchUser(person.id, { role: roleSelect.value }));
+
+    const actions = el("div", { className: "row-actions" });
+    actions.append(el("button", {
+      className: "btn xs ghost",
+      textContent: person.is_active ? "Disable" : "Enable",
+      onclick: () => patchUser(person.id, { is_active: !person.is_active }),
+    }));
+    actions.append(el("button", {
+      className: "btn xs ghost", textContent: "Reset link",
+      onclick: () => resetLinkFor(person),
+    }));
+    if (!isSelf) {
+      actions.append(el("button", {
+        className: "btn xs danger", textContent: "Delete",
+        onclick: async () => {
+          if (!confirm(`Delete ${person.email}? Their posted rows stay in the workbook.`)) return;
+          try { await api(`/api/admin/users/${person.id}`, { method: "DELETE" }); }
+          catch (err) { toast(err.message, "error"); return; }
+          toast("Deleted.");
+          renderAdmin();
+        },
+      }));
+    }
+
+    rows.append(el("tr", { className: person.is_active ? "" : "dim" }, [
+      el("td", {}, [
+        el("div", { className: "cell-main", textContent: person.name }),
+        el("div", { className: "cell-sub", textContent: person.email }),
+      ]),
+      el("td", {}, roleSelect),
+      el("td", {}, el("span", { className: `pill ${person.is_active ? "ready" : "new"}` },
+        [icon(person.is_active ? "check" : "dot", 12), person.is_active ? "Active" : "Disabled"])),
+      el("td", { className: "cell-sub", textContent: person.last_login_at
+        ? person.last_login_at.replace("T", " ").slice(0, 16) : "never" }),
+      el("td", {}, actions),
+    ]));
+  }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: "People" }),
+      el("span", { className: "grow" }),
+      el("button", { className: "btn sm primary", textContent: "Add someone",
+                     onclick: () => showNewUserForm() }),
+    ]),
+    el("div", { id: "new-user-slot" }),
+    el("div", { className: "table-wrap" }, el("table", { className: "grid" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { textContent: "Person" }), el("th", { textContent: "Role" }),
+        el("th", { textContent: "Status" }), el("th", { textContent: "Last signed in" }),
+        el("th", { textContent: "" }),
+      ])),
+      rows,
+    ])),
+  ]));
+
+  // ---- Failed jobs ---------------------------------------------------------
+  if (stats.failed_jobs.length) {
+    body.append(el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "Failed invoices" })]),
+      historyTable(stats.failed_jobs),
+    ]));
+  }
+
+  // ---- Overrides: the most audit-sensitive thing anyone can do -------------
+  if (stats.overrides.length) {
+    body.append(el("div", { className: "card" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Posted despite a failed check" }),
+        el("span", { className: "grow" }),
+        el("span", { className: "pill needs_review" }, [icon("alert", 12), "Override"]),
+      ]),
+      el("div", { className: "card-body" }, el("p", { className: "muted" },
+        "Someone chose to file these even though validation objected. Each one records who.")),
+      historyTable(stats.overrides),
+    ]));
+  }
+
+  // ---- Activity ------------------------------------------------------------
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Activity" })]),
+    el("div", { className: "table-wrap" }, el("table", { className: "grid log" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { textContent: "When" }), el("th", { textContent: "Who" }),
+        el("th", { textContent: "What" }), el("th", { textContent: "Detail" }),
+      ])),
+      el("tbody", {}, log.map((entry) => el("tr", {}, [
+        el("td", { className: "cell-sub", textContent: entry.at.replace("T", " ").slice(0, 16) }),
+        el("td", { textContent: entry.user_email || "—" }),
+        el("td", {}, el("code", { textContent: entry.action })),
+        el("td", { className: "cell-sub", textContent: entry.detail || "" }),
+      ]))),
+    ])),
+  ]));
+
+  // ---- System --------------------------------------------------------------
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "System" })]),
+    el("div", { className: "card-body" }, el("div", { className: "kv" }, [
+      el("span", { className: "k" }, "Reader"),
+      el("span", { className: "v" }, stats.reader),
+      el("span", { className: "k" }, "Return periods held"),
+      el("span", { className: "v" }, (stats.periods || []).join(", ") || "—"),
+      el("span", { className: "k" }, "Data directory"),
+      el("span", { className: "v mono", textContent: stats.data_dir }),
+    ])),
+  ]));
+}
+
+function showNewUserForm() {
+  const slot = $("#new-user-slot");
+  slot.textContent = "";
+
+  const name = el("input", { className: "control", placeholder: "Name" });
+  const email = el("input", { className: "control", type: "email", placeholder: "Email" });
+  const password = el("input", { className: "control", type: "password",
+                                 placeholder: "Temporary password, 10+ characters" });
+  const role = el("select", { className: "control" }, [
+    el("option", { value: "user", textContent: "User" }),
+    el("option", { value: "admin", textContent: "Admin" }),
+  ]);
+
+  slot.append(el("div", { className: "card-body inset form-row" }, [
+    name, email, password, role,
+    el("button", {
+      className: "btn primary", textContent: "Create",
+      onclick: async () => {
+        try {
+          await api("/api/admin/users", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.value, email: email.value,
+                                   password: password.value, role: role.value }),
+          });
+          toast("Account created.", "good");
+          renderAdmin();
+        } catch (err) { toast(err.message, "error"); }
+      },
+    }),
+    el("button", { className: "btn ghost", textContent: "Cancel",
+                   onclick: () => { slot.textContent = ""; } }),
+  ]));
+}
+
+async function patchUser(userId, changes) {
+  try {
+    await api(`/api/admin/users/${userId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    });
+    toast("Saved.", "good");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  renderAdmin();
+}
+
+async function resetLinkFor(person) {
+  try {
+    const result = await api(`/api/admin/users/${person.id}/reset-link`, { method: "POST" });
+    // No mail server, so the link is shown for an administrator to pass on by
+    // whatever channel they already trust.
+    window.prompt(
+      `Password reset link for ${result.email}. It expires in `
+      + `${result.expires_in_minutes} minutes. Copy it and send it to them.`,
+      result.link,
+    );
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// Boot
+// --------------------------------------------------------------------------- //
+
+function paintIdentity() {
+  const user = session.user || {};
+  const initials = (user.name || user.email || "?")
+    .split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+  $("#who-initials").textContent = initials || "?";
+  $("#who-name").textContent = user.name || user.email || "—";
+  $("#who-role").textContent = user.role === "admin" ? "Administrator" : "User";
+  $("#nav-admin").hidden = !isAdmin();
+}
+
+async function enterApp() {
+  $("#gate").hidden = true;
+  $("#shell").hidden = false;
+  paintIdentity();
+  await loadInfo();
+  await loadDocuments();
+  show(screenFromHash(), { push: false });
+}
+
+function resetTokenFromHash() {
+  const match = (location.hash || "").match(/[?&]token=([^&]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 (async function start() {
   wire();
+
+  // A reset link is a way in, so it is checked before any session is.
+  const resetToken = resetTokenFromHash();
+  if (location.hash.startsWith("#/reset") && resetToken) {
+    gate.mode = "reset";
+    gate.resetToken = resetToken;
+    renderGate();
+    return;
+  }
+
+  let setup = { needs_setup: false };
   try {
-    await loadInfo();
-    await loadDocuments();
-    show(screenFromHash(), { push: false });
+    setup = await api("/api/bootstrap");
+    if (setup.company) $("#gate-company").textContent = setup.company;
   } catch (err) {
-    $("#inbox-list").append(el("div", { className: "card" }, el("div", { className: "empty" }, [
-      el("div", { className: "big" }, "The backend is not responding"),
-      `This page is served by the frontend server, but the API at ${API} could not be reached. `,
-      el("div", { style: "margin-top:.6rem;font-family:var(--mono);font-size:.8rem" },
-        "cd backend  →  python -m uvicorn app.main:app --port 8000"),
-    ])));
-    toast(err.message, "error");
+    renderGate();
+    gateAlert(`Cannot reach the backend at ${API}. Start it with: `
+              + "cd backend, then .\\run.ps1", "error");
+    return;
+  }
+
+  if (setup.needs_setup) {
+    gate.mode = "setup";
+    renderGate();
+    return;
+  }
+
+  if (!session.token) {
+    renderGate();
+    return;
+  }
+
+  try {
+    session.user = await api("/api/auth/me");
+    await enterApp();
+  } catch (err) {
+    // A token that no longer works is not an error worth alarming anyone with.
+    setToken("");
+    renderGate();
+    if (!(err instanceof Unauthenticated)) gateAlert(err.message);
   }
 })();

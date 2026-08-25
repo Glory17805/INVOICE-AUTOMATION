@@ -8,7 +8,37 @@
 </head>
 <body>
 
-<div class="shell">
+<!-- ===================================================================== -->
+<!-- Signed out. A single view that switches between sign in, first-run    -->
+<!-- setup, forgotten password and reset, so there is one card on screen   -->
+<!-- and never a half-built app behind it.                                 -->
+<!-- ===================================================================== -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-brand">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke-linejoin="round"/>
+          <path d="M14 3v6h6M8.5 13h7M8.5 17h4" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="gate-title">Invoice Automation</div>
+        <div class="gate-sub" id="gate-company">GST filing, without the typing</div>
+      </div>
+    </div>
+
+    <div id="gate-alert"></div>
+    <form id="gate-form" novalidate></form>
+
+    <div class="gate-foot" id="gate-foot"></div>
+  </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- Signed in                                                             -->
+<!-- ===================================================================== -->
+<div class="shell" id="shell" hidden>
 
   <aside class="sidebar">
     <div class="brand">
@@ -17,11 +47,25 @@
     </div>
 
     <nav class="nav" id="nav">
-      <button data-screen="inbox" aria-current="page">
+      <div class="nav-group">Work</div>
+      <button data-screen="dashboard" aria-current="page">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <rect x="1.8" y="1.8" width="5.4" height="5.4" rx="1"/><rect x="8.8" y="1.8" width="5.4" height="5.4" rx="1"/>
+          <rect x="1.8" y="8.8" width="5.4" height="5.4" rx="1"/><rect x="8.8" y="8.8" width="5.4" height="5.4" rx="1"/>
+        </svg>
+        <span class="label">Dashboard</span>
+      </button>
+      <button data-screen="upload">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <path d="M8 11V3m0 0L5 6m3-3 3 3M2.5 12.5h11" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="label">Upload</span>
+      </button>
+      <button data-screen="queue">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
           <path d="M1.5 9.5h3l1 2h5l1-2h3M1.5 9.5 3 3h10l1.5 6.5v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" stroke-linejoin="round"/>
         </svg>
-        <span class="label">Inbox</span><span class="pip" id="pip-inbox"></span>
+        <span class="label">Queue</span><span class="pip" id="pip-inbox"></span>
       </button>
       <button data-screen="review">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
@@ -29,6 +73,14 @@
         </svg>
         <span class="label">Review</span><span class="pip" id="pip-review"></span>
       </button>
+      <button data-screen="history">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <path d="M8 4.5V8l2.5 1.5" stroke-linecap="round"/><circle cx="8" cy="8" r="6.2"/>
+        </svg>
+        <span class="label">History</span>
+      </button>
+
+      <div class="nav-group">Returns</div>
       <button data-screen="registers">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
           <rect x="1.5" y="2.5" width="13" height="11" rx="1"/><path d="M1.5 6h13M6 6v7.5"/>
@@ -41,10 +93,39 @@
         </svg>
         <span class="label">Tax position</span>
       </button>
+
+      <div class="nav-group">System</div>
+      <button data-screen="email">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="m1.8 4.5 6.2 4.5 6.2-4.5" stroke-linejoin="round"/>
+        </svg>
+        <span class="label">Email intake</span><span class="pip" id="pip-email"></span>
+      </button>
+      <button data-screen="settings">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <circle cx="8" cy="8" r="2.2"/>
+          <path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6 3.5 3.5" stroke-linecap="round"/>
+        </svg>
+        <span class="label">Settings</span>
+      </button>
+      <button data-screen="admin" id="nav-admin" hidden>
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <path d="M8 1.8 13.5 4v4c0 3.2-2.3 5.4-5.5 6.2C4.8 13.4 2.5 11.2 2.5 8V4z" stroke-linejoin="round"/>
+        </svg>
+        <span class="label">Admin</span>
+      </button>
     </nav>
 
     <div class="sidebar-foot">
       <div class="row"><span class="dot" id="reader-dot"></span><span id="reader-label">—</span></div>
+      <button class="who" id="who" title="Your account">
+        <span class="avatar" id="who-initials">–</span>
+        <span class="who-text">
+          <span class="who-name" id="who-name">—</span>
+          <span class="who-role" id="who-role"></span>
+        </span>
+      </button>
+      <button class="btn ghost sm block" id="btn-logout">Sign out</button>
     </div>
   </aside>
 
@@ -65,23 +146,50 @@
       <button class="btn ghost" id="btn-reset" title="Discard posted rows and start this period again">Reset</button>
     </div>
 
-    <!-- Shown only when Claude was configured but could not be reached, so that
+    <!-- Shown only when the configured reader could not be reached, so that
          "every invoice is being read offline" is never a silent condition. -->
     <div id="reader-banner" hidden></div>
 
-    <!-- ===== Inbox ===== -->
-    <section class="page" id="screen-inbox">
+    <!-- ===== Dashboard ===== -->
+    <section class="page" id="screen-dashboard">
       <header>
-        <h1>Invoice inbox</h1>
-        <p>Drop invoices here and they are read, classified and checked automatically.
-           Anything the system is unsure about waits for you in Review.</p>
+        <h1 id="dash-greeting">Dashboard</h1>
+        <p>Where everything stands, and the quickest way to add more.</p>
+      </header>
+      <div id="dashboard-body"></div>
+    </section>
+
+    <!-- ===== Upload ===== -->
+    <section class="page" id="screen-upload" hidden>
+      <header>
+        <h1>Upload invoices</h1>
+        <p>A single invoice or a whole print run. Each invoice inside a file becomes
+           its own document, so none of them is quietly dropped.</p>
+      </header>
+      <div id="upload-body"></div>
+    </section>
+
+    <!-- ===== Processing ===== -->
+    <section class="page" id="screen-processing" hidden>
+      <header>
+        <h1>Processing</h1>
+        <p>What the system is doing with what you just sent it.</p>
+      </header>
+      <div id="processing-body"></div>
+    </section>
+
+    <!-- ===== Queue ===== -->
+    <section class="page" id="screen-queue" hidden>
+      <header>
+        <h1>Queue</h1>
+        <p>Everything waiting on a person, already read and classified.
+           Anything the system is unsure about is marked.</p>
       </header>
 
       <div class="summary" id="summary"></div>
 
-      <div class="dropzone" id="dropzone">
+      <div class="dropzone compact" id="dropzone">
         <div class="big">Drop invoices here, or click to choose files</div>
-        <div class="hint">PDF, PNG or JPG — a single invoice or a whole print run</div>
         <input type="file" id="file-input" multiple hidden
                accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv">
       </div>
@@ -107,6 +215,15 @@
       <div id="review-body"></div>
     </section>
 
+    <!-- ===== History ===== -->
+    <section class="page" id="screen-history" hidden>
+      <header>
+        <h1>Invoice history</h1>
+        <p>Every invoice this system has seen, however it arrived.</p>
+      </header>
+      <div id="history-body"></div>
+    </section>
+
     <!-- ===== Registers ===== -->
     <section class="page" id="screen-registers" hidden>
       <header>
@@ -125,6 +242,33 @@
            every time a row is posted.</p>
       </header>
       <div id="tax-body"></div>
+    </section>
+
+    <!-- ===== Email intake ===== -->
+    <section class="page" id="screen-email" hidden>
+      <header>
+        <h1>Email intake</h1>
+        <p>Invoices that arrive on their own, without anyone uploading them.</p>
+      </header>
+      <div id="email-body"></div>
+    </section>
+
+    <!-- ===== Settings ===== -->
+    <section class="page" id="screen-settings" hidden>
+      <header>
+        <h1>Settings</h1>
+        <p>Your account, and how this system handles what arrives.</p>
+      </header>
+      <div id="settings-body"></div>
+    </section>
+
+    <!-- ===== Admin ===== -->
+    <section class="page" id="screen-admin" hidden>
+      <header>
+        <h1>Administration</h1>
+        <p>People, activity and the state of the system.</p>
+      </header>
+      <div id="admin-body"></div>
     </section>
 
   </div>

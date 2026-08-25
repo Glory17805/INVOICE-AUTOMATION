@@ -355,9 +355,16 @@ _ONE_PIXEL_PNG = base64.b64decode(
 
 def test_a_scan_with_no_text_layer_is_flagged_on_that_document(tmp_path, monkeypatch):
     """The offline reader's one real failure mode has to surface, and it has to
-    surface on the document it affects rather than as a standing warning."""
+    surface on the document it affects rather than as a standing warning.
+
+    The offline reader is pinned deliberately. This test is *about* running
+    without a model, and leaving that to whichever key happens to be in .env
+    made it pass or fail on the state of somebody's billing account rather than
+    on the behaviour it describes.
+    """
     from app import config, pipeline, store, workbook
 
+    monkeypatch.setattr(pipeline, "has_credentials", lambda: False)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "INCOMING_DIR", tmp_path / "incoming")
     monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
@@ -380,6 +387,7 @@ def test_a_readable_pdf_is_not_flagged_for_a_missing_text_layer(tmp_path, monkey
     """The complement: a normal PDF must not pick up the scan warning."""
     from app import config, pipeline, store, workbook
 
+    monkeypatch.setattr(pipeline, "has_credentials", lambda: False)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "INCOMING_DIR", tmp_path / "incoming")
     monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
@@ -402,6 +410,7 @@ def test_an_unreadable_scan_reports_one_cause_not_seven_symptoms(tmp_path, monke
     """No text layer means every other check fails too. Report the cause alone."""
     from app import config, pipeline, store, workbook
 
+    monkeypatch.setattr(pipeline, "has_credentials", lambda: False)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "INCOMING_DIR", tmp_path / "incoming")
     monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
