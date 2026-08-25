@@ -106,6 +106,7 @@ def bootstrap() -> dict:
     """
     return {
         "needs_setup": accounts.count_users() == 0,
+        "signup_mode": appsettings.get("signup_mode"),
         "company": workbook.workbook_info().get("company"),
     }
 
@@ -123,24 +124,54 @@ class Signup(BaseModel):
 
 @app.post("/api/auth/signup")
 def signup(body: Signup, request: Request) -> dict:
-    """Create the first account, which is the administrator.
+    """Create an account from the sign-in page.
 
-    Only available while no accounts exist. Afterwards, an administrator adds
-    people from the Admin screen - an open signup form on a system holding a
-    company's tax records is not a feature.
+    Three cases, in order:
+
+    - No accounts exist at all. Whoever gets here first becomes the
+      administrator, because a fresh install with no way in is worse than a
+      first-run signup.
+    - Signup is set to `open`. A working account, signed straight in.
+    - Signup is set to `approval` (the default). The account is created but
+      cannot sign in until an administrator lets it in. The person is told that
+      plainly rather than being handed a password that silently does nothing.
+
+    Under `closed`, this route refuses. What it never does is decide the policy
+    itself: that is a setting an administrator owns.
     """
-    if accounts.count_users() > 0:
+    first_account = accounts.count_users() == 0
+    mode = appsettings.get("signup_mode")
+
+    if not first_account and mode == "closed":
         raise HTTPException(
-            409, "This system already has accounts. Ask an administrator to add you."
+            403, "New accounts are not open on this system. Ask an administrator to add you."
         )
+
+    role = "admin" if first_account else "user"
+    approved = first_account or mode == "open"
+
     try:
-        user = accounts.create_user(body.email, body.name, body.password, role="admin")
+        user = accounts.create_user(body.email, body.name, body.password,
+                                    role=role, approved=approved)
     except accounts.AccountError as exc:
         raise HTTPException(400, str(exc))
 
-    accounts.record(user, "signup", "first account, made administrator")
+    if first_account:
+        accounts.record(user, "signup", "first account, made administrator")
+    else:
+        accounts.record(user, "signup", f"self-registered ({mode})")
+
+    if not approved:
+        # No session: the account exists, and that is all it does so far.
+        return {
+            "pending": True,
+            "user": user,
+            "detail": "Your account has been created and is waiting for an administrator "
+                      "to approve it. You will be able to sign in once they do.",
+        }
+
     token = accounts.open_session(user["id"], request.headers.get("User-Agent"))
-    return {"token": token, "user": user}
+    return {"token": token, "user": user, "pending": False}
 
 
 @app.post("/api/auth/login")
@@ -782,6 +813,26 @@ def admin_update_user(user_id: str, body: UserPatch,
     return updated
 
 
+@app.get("/api/admin/pending")
+def admin_pending(user: dict = Depends(require_admin)) -> list[dict]:
+    """Accounts that asked to join and are waiting on someone."""
+    return accounts.pending_users()
+
+
+@app.post("/api/admin/users/{user_id}/approve")
+def admin_approve_user(user_id: str, role: str = "user",
+                       user: dict = Depends(require_admin)) -> dict:
+    """Let a self-registered account in, optionally as an administrator."""
+    try:
+        approved = accounts.approve_user(user_id)
+        if role != approved["role"]:
+            approved = accounts.update_user(user_id, role=role)
+    except accounts.AccountError as exc:
+        raise HTTPException(400, str(exc))
+    accounts.record(user, "user_approved", {"email": approved["email"], "role": approved["role"]})
+    return approved
+
+
 @app.delete("/api/admin/users/{user_id}")
 def admin_delete_user(user_id: str, user: dict = Depends(require_admin)) -> dict:
     if user_id == user.get("id"):
@@ -834,8 +885,9 @@ def admin_stats(user: dict = Depends(require_admin)) -> dict:
     return {
         "users": {
             "total": len(users),
-            "active": len([u for u in users if u["is_active"]]),
+            "active": len([u for u in users if u["is_active"] and u["approved"]]),
             "admins": len([u for u in users if u["role"] == "admin"]),
+            "awaiting_approval": len([u for u in users if u["awaiting_approval"]]),
         },
         "documents": {
             "total": len(documents),

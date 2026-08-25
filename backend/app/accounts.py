@@ -104,12 +104,19 @@ def check_password_quality(password: str) -> None:
 # --------------------------------------------------------------------------- #
 
 def _public(row) -> dict:
+    keys = row.keys()
+    approved = bool(row["approved"]) if "approved" in keys else True
     return {
         "id": row["id"],
         "email": row["email"],
         "name": row["name"],
         "role": row["role"],
         "is_active": bool(row["is_active"]),
+        "approved": approved,
+        # Two different states wear the same "cannot sign in" face, and an
+        # administrator needs to tell them apart: somebody who asked to join and
+        # is waiting, versus somebody who was deliberately switched off.
+        "awaiting_approval": not approved,
         "created_at": row["created_at"],
         "last_login_at": row["last_login_at"],
     }
@@ -138,7 +145,13 @@ def find_by_email(email: str) -> dict | None:
     return _public(row) if row else None
 
 
-def create_user(email: str, name: str, password: str, role: str = "user") -> dict:
+def create_user(email: str, name: str, password: str, role: str = "user",
+                approved: bool = True) -> dict:
+    """Create an account.
+
+    `approved=False` is the self-signup case: the account exists and its owner
+    can be told so, but it cannot sign in until an administrator lets it in.
+    """
     email = (email or "").strip()
     name = (name or "").strip() or email.split("@")[0]
     if "@" not in email or len(email) < 5:
@@ -154,17 +167,33 @@ def create_user(email: str, name: str, password: str, role: str = "user") -> dic
         "role": role,
         "password_hash": hash_password(password),
         "created_at": _stamp(),
+        "approved": 1 if approved else 0,
     }
     with db.LOCK, db.connect() as c:
         if c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
             raise AccountError("An account with that email already exists.")
         c.execute(
-            "INSERT INTO users (id, email, name, role, password_hash, is_active, created_at) "
-            "VALUES (:id, :email, :name, :role, :password_hash, 1, :created_at)",
+            "INSERT INTO users (id, email, name, role, password_hash, is_active, "
+            "                   created_at, approved) "
+            "VALUES (:id, :email, :name, :role, :password_hash, 1, :created_at, :approved)",
             record,
         )
         row = c.execute("SELECT * FROM users WHERE id = ?", (record["id"],)).fetchone()
         return _public(row)
+
+
+def approve_user(user_id: str) -> dict:
+    """Let a self-registered account in."""
+    with db.LOCK, db.connect() as c:
+        row = c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise AccountError("No such user.")
+        c.execute("UPDATE users SET approved = 1, is_active = 1 WHERE id = ?", (user_id,))
+        return _public(c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def pending_users() -> list[dict]:
+    return [user for user in list_users() if user["awaiting_approval"]]
 
 
 def update_user(user_id: str, *, name: str | None = None, email: str | None = None,
@@ -211,8 +240,14 @@ def update_user(user_id: str, *, name: str | None = None, email: str | None = No
 
 
 def _other_active_admins(connection, excluding: str) -> int:
+    """Administrators who could actually sign in and undo this.
+
+    An unapproved admin cannot sign in, so it is not a way back into the system
+    and must not count as one.
+    """
     return connection.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1 AND id <> ?",
+        "SELECT COUNT(*) AS n FROM users "
+        "WHERE role = 'admin' AND is_active = 1 AND approved = 1 AND id <> ?",
         (excluding,),
     ).fetchone()["n"]
 
@@ -264,10 +299,20 @@ def authenticate(email: str, password: str) -> dict:
         raise generic
     if not verify_password(password or "", row["password_hash"]):
         raise generic
-    if not row["is_active"]:
+
+    person = _public(row)
+    # Told apart on purpose: "still waiting" and "switched off" call for
+    # different things from the person reading it. Both are only ever shown
+    # after the password was correct, so neither leaks who has an account.
+    if person["awaiting_approval"]:
+        raise AccountError(
+            "Your account is waiting for an administrator to approve it. "
+            "You will be able to sign in once they do."
+        )
+    if not person["is_active"]:
         raise AccountError("This account has been disabled. Ask an administrator.")
 
-    return _public(row)
+    return person
 
 
 def open_session(user_id: str, user_agent: str | None = None) -> str:

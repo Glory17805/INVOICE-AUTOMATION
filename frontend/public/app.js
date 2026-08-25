@@ -1234,7 +1234,7 @@ function wire() {
 // want in.
 // --------------------------------------------------------------------------- //
 
-const gate = { mode: "login", busy: false, resetToken: "" };
+const gate = { mode: "login", busy: false, resetToken: "", signupMode: "closed" };
 
 function isAdmin() {
   return (session.user || {}).role === "admin";
@@ -1285,6 +1285,19 @@ function renderGate() {
                                                   placeholder: "At least 10 characters" }),
       submit("Create administrator"),
     );
+  } else if (gate.mode === "signup") {
+    form.append(
+      el("p", { className: "gate-lede" }, gate.signupMode === "approval"
+        ? "Create your account and an administrator will approve it. You will be able "
+          + "to sign in once they do."
+        : "Create your account and you will be signed straight in."),
+      field("name", "Your name", "text", { autocomplete: "name" }),
+      field("email", "Email", "email", { autocomplete: "username" }),
+      field("password", "Password", "password", { autocomplete: "new-password",
+                                                  placeholder: "At least 10 characters" }),
+      submit("Create account"),
+    );
+    foot.append(link("Already have an account? Sign in", "login"));
   } else if (gate.mode === "forgot") {
     form.append(
       el("p", { className: "gate-lede" },
@@ -1308,6 +1321,13 @@ function renderGate() {
       submit("Sign in"),
     );
     foot.append(link("Forgot your password?", "forgot"));
+
+    // Only offered when the system actually accepts one. A link that always
+    // ends in "signup is closed" is worse than no link.
+    if (gate.signupMode === "approval" || gate.signupMode === "open") {
+      foot.append(el("span", { className: "gate-sep", textContent: "·" }));
+      foot.append(link("Create an account", "signup"));
+    }
   }
 
   const first = form.querySelector("input");
@@ -1324,11 +1344,22 @@ async function submitGate(event) {
   gateAlert("");
 
   try {
-    if (gate.mode === "setup") {
+    if (gate.mode === "setup" || gate.mode === "signup") {
       const result = await api("/api/auth/signup", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: data.email, name: data.name, password: data.password }),
       });
+
+      // Under the approval policy there is no session yet - the account exists
+      // and that is all it does. Say so instead of pretending to sign in.
+      if (result.pending) {
+        gate.mode = "login";
+        gate.busy = false;
+        renderGate();
+        gateAlert(result.detail, "good");
+        return;
+      }
+
       setToken(result.token);
       session.user = result.user;
       await enterApp();
@@ -1975,6 +2006,33 @@ async function renderSettings() {
     ]),
   ]));
 
+  // ---- Who can join --------------------------------------------------------
+  if (isAdmin()) {
+    const modes = el("div", { className: "radios" });
+    for (const option of data.options.signup_mode) {
+      const input = el("input", {
+        type: "radio", name: "signup_mode", id: `signup-${option.value}`,
+        value: option.value, checked: data.values.signup_mode === option.value,
+      });
+      input.addEventListener("change", () => {
+        if (input.checked) saveSetting("signup_mode", option.value);
+      });
+      modes.append(el("label", { className: "radio", htmlFor: `signup-${option.value}` },
+        [input, el("span", { textContent: option.label })]));
+    }
+
+    body.append(el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "Who can create an account" })]),
+      el("div", { className: "card-body form" }, [
+        modes,
+        el("p", { className: "muted" },
+          "This system holds filed tax records, so the default is that anyone may ask "
+          + "and you decide. Choosing the second option means whoever finds the sign-in "
+          + "page can read every invoice and every register without anyone approving it."),
+      ]),
+    ]));
+  }
+
   // ---- Notifications -------------------------------------------------------
   body.append(el("div", { className: "card" }, [
     el("header", {}, [el("h2", { textContent: "Notifications" })]),
@@ -2016,10 +2074,67 @@ async function renderAdmin() {
 
   body.append(el("div", { className: "stats" }, [
     statCard(stats.users.total, "People"),
-    statCard(stats.documents.total, "Invoices"),
+    statCard(stats.users.awaiting_approval || 0, "Waiting to be let in",
+             stats.users.awaiting_approval ? "warn" : ""),
     statCard(stats.documents.posted || 0, "Posted", "good"),
     statCard(stats.documents.failed || 0, "Failed", stats.documents.failed ? "bad" : ""),
   ]));
+
+  // ---- Waiting to be let in ------------------------------------------------
+  const pending = users.filter((person) => person.awaiting_approval);
+  if (pending.length) {
+    const waiting = el("tbody");
+    for (const person of pending) {
+      waiting.append(el("tr", {}, [
+        el("td", {}, [
+          el("div", { className: "cell-main", textContent: person.name }),
+          el("div", { className: "cell-sub", textContent: person.email }),
+        ]),
+        el("td", { className: "cell-sub", textContent: person.created_at
+          ? person.created_at.replace("T", " ").slice(0, 16) : "" }),
+        el("td", {}, el("div", { className: "row-actions" }, [
+          el("button", {
+            className: "btn xs primary", textContent: "Approve",
+            onclick: () => approvePerson(person, "user"),
+          }),
+          el("button", {
+            className: "btn xs ghost", textContent: "Approve as admin",
+            onclick: () => approvePerson(person, "admin"),
+          }),
+          el("button", {
+            className: "btn xs danger", textContent: "Reject",
+            onclick: async () => {
+              if (!confirm(`Reject ${person.email}? Their account is deleted.`)) return;
+              try { await api(`/api/admin/users/${person.id}`, { method: "DELETE" }); }
+              catch (err) { toast(err.message, "error"); return; }
+              toast("Rejected.");
+              renderAdmin();
+            },
+          }),
+        ])),
+      ]));
+    }
+
+    body.append(el("div", { className: "card attention" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Waiting to be let in" }),
+        el("span", { className: "grow" }),
+        el("span", { className: "pill needs_review" },
+          [icon("clock", 12), `${pending.length} waiting`]),
+      ]),
+      el("div", { className: "card-body" }, el("p", { className: "muted" },
+        "These people created an account from the sign-in page. They cannot sign in, "
+        + "and cannot see anything, until you approve them.")),
+      el("div", { className: "table-wrap" }, el("table", { className: "grid" }, [
+        el("thead", {}, el("tr", {}, [
+          el("th", { textContent: "Person" }),
+          el("th", { textContent: "Asked" }),
+          el("th", { textContent: "" }),
+        ])),
+        waiting,
+      ])),
+    ]));
+  }
 
   // ---- People --------------------------------------------------------------
   const rows = el("tbody");
@@ -2063,8 +2178,13 @@ async function renderAdmin() {
         el("div", { className: "cell-sub", textContent: person.email }),
       ]),
       el("td", {}, roleSelect),
-      el("td", {}, el("span", { className: `pill ${person.is_active ? "ready" : "new"}` },
-        [icon(person.is_active ? "check" : "dot", 12), person.is_active ? "Active" : "Disabled"])),
+      // Three states, not two: waiting to be let in is not the same as
+      // switched off, and an administrator acts differently on each.
+      el("td", {}, person.awaiting_approval
+        ? el("span", { className: "pill needs_review" }, [icon("clock", 12), "Awaiting approval"])
+        : el("span", { className: `pill ${person.is_active ? "ready" : "new"}` },
+            [icon(person.is_active ? "check" : "dot", 12),
+             person.is_active ? "Active" : "Disabled"])),
       el("td", { className: "cell-sub", textContent: person.last_login_at
         ? person.last_login_at.replace("T", " ").slice(0, 16) : "never" }),
       el("td", {}, actions),
@@ -2176,6 +2296,16 @@ function showNewUserForm() {
   ]));
 }
 
+async function approvePerson(person, role) {
+  try {
+    await api(`/api/admin/users/${person.id}/approve?role=${role}`, { method: "POST" });
+    toast(`${person.name || person.email} can sign in now.`, "good");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  renderAdmin();
+}
+
 async function patchUser(userId, changes) {
   try {
     await api(`/api/admin/users/${userId}`, {
@@ -2247,6 +2377,7 @@ function resetTokenFromHash() {
   let setup = { needs_setup: false };
   try {
     setup = await api("/api/bootstrap");
+    gate.signupMode = setup.signup_mode || "closed";
     if (setup.company) $("#gate-company").textContent = setup.company;
   } catch (err) {
     renderGate();

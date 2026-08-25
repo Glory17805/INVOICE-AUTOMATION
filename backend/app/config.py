@@ -8,7 +8,27 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent   # the backend/ directory
 PROJECT_ROOT = APP_ROOT.parent                       # gst-automation/
-DATA_DIR = APP_ROOT / "data"
+
+
+def _data_dir() -> Path:
+    """Where the workbooks, the queue and the archive live.
+
+    Overridable with GST_DATA_DIR. Read from the real environment only, not
+    .env: pointing the data somewhere else is a deployment decision, and it has
+    to be settable before anything reads the file that would configure it.
+
+    This exists because the single-instance guard tells a second backend to
+    "point this one at a different data directory", and an instruction the
+    application cannot carry out is worse than no instruction.
+    """
+    configured = os.environ.get("GST_DATA_DIR", "").strip()
+    if not configured:
+        return APP_ROOT / "data"
+    candidate = Path(configured)
+    return candidate if candidate.is_absolute() else (APP_ROOT / candidate).resolve()
+
+
+DATA_DIR = _data_dir()
 INCOMING_DIR = DATA_DIR / "incoming"
 ARCHIVE_DIR = DATA_DIR / "archive"
 WORKBOOK_DIR = DATA_DIR / "workbook"

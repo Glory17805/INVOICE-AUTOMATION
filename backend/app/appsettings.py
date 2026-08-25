@@ -18,6 +18,17 @@ from . import db
 # key -> (default, validator). The validator returns the cleaned value or
 # raises ValueError with something worth showing a person.
 DEFAULTS: dict[str, object] = {
+    # Who may create an account from the sign-in page.
+    #
+    #   approval - anyone may ask; an administrator lets them in   (default)
+    #   open     - anyone may create a working account immediately
+    #   closed   - no signup link; administrators add people
+    #
+    # "approval" is the default rather than "open" because this system holds a
+    # company's filed tax records. The link is there and it works; what it does
+    # not do is hand out access to those records to whoever finds the page.
+    "signup_mode": "approval",
+
     # Invoice processing
     "currency": "INR",
     "date_format": "dd-MMM-yyyy",
@@ -37,6 +48,7 @@ DEFAULTS: dict[str, object] = {
 
 _CURRENCIES = {"INR", "USD", "EUR", "GBP", "AED", "SGD"}
 _DATE_FORMATS = {"dd-MMM-yyyy", "dd/MM/yyyy", "yyyy-MM-dd", "MM/dd/yyyy"}
+_SIGNUP_MODES = {"approval", "open", "closed"}
 
 
 def _clean(key: str, value):
@@ -56,6 +68,11 @@ def _clean(key: str, value):
         text = str(value).strip()
         if text not in _DATE_FORMATS:
             raise ValueError(f"Date format must be one of {', '.join(sorted(_DATE_FORMATS))}.")
+        return text
+    if key == "signup_mode":
+        text = str(value).strip().lower()
+        if text not in _SIGNUP_MODES:
+            raise ValueError(f"Signup mode must be one of {', '.join(sorted(_SIGNUP_MODES))}.")
         return text
     return str(value).strip()
 
@@ -98,4 +115,12 @@ def options() -> dict:
     return {
         "currency": sorted(_CURRENCIES),
         "date_format": sorted(_DATE_FORMATS),
+        "signup_mode": [
+            {"value": "approval",
+             "label": "Anyone can ask; an administrator approves them"},
+            {"value": "open",
+             "label": "Anyone can create a working account immediately"},
+            {"value": "closed",
+             "label": "No signup link; administrators add people"},
+        ],
     }

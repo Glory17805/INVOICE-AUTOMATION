@@ -85,6 +85,23 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS activity_at ON activity(at DESC);
 """
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS does nothing
+# to a table that already exists, so a new column has to be added explicitly or
+# it appears only on machines that started fresh.
+_ADDED_COLUMNS = [
+    # Whether an administrator has let this account in. Existing rows default to
+    # 1: everyone who already had an account keeps it.
+    ("users", "approved", "INTEGER NOT NULL DEFAULT 1"),
+]
+
+
+def _migrate(connection) -> None:
+    for table, column, definition in _ADDED_COLUMNS:
+        existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 # Databases whose schema has been applied this run.
 _ready: set[str] = set()
 
@@ -120,6 +137,7 @@ def connect():
         connection.execute("PRAGMA foreign_keys=ON")
         if str(file) not in _ready:
             connection.executescript(SCHEMA)
+            _migrate(connection)
             _ready.add(str(file))
         yield connection
         connection.commit()

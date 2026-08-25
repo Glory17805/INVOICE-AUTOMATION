@@ -83,6 +83,18 @@ is read-the-register, pick-the-next-free-line, write, save, and two processes
 interleaving those steps would lose a row with no error raised anywhere. For the same
 reason, do not run it with `--workers 2`.
 
+To run a second instance deliberately — a scratch copy for testing, say — give it its
+own directory:
+
+```powershell
+$env:GST_DATA_DIR = "D:\somewhere\else"
+python -m uvicorn app.main:app --port 8010 --workers 1
+```
+
+It seeds itself from the same master workbook and shares nothing with the first.
+`GST_DATA_DIR` is read from the real environment only, not `.env`, because it has to be
+settable before the process reads the file that would otherwise configure it.
+
 ### Access
 
 Every route but `/api/health` and the sign-in routes requires a session token, obtained
@@ -142,9 +154,20 @@ the system reproduces the client's own numbers.
 ## Signing in
 
 Everyone has their own account. The first person to open a fresh install is
-offered a signup form and becomes the administrator; after that, administrators
-add people from the Admin screen — an open signup form on a system holding a
-company's tax records is not a feature.
+offered a signup form and becomes the administrator.
+
+After that, the sign-in page carries a **Create an account** link, and what it
+does is an administrator's choice — *Settings → Who can create an account*:
+
+| Policy | What happens |
+|---|---|
+| **Anyone can ask; an administrator approves** *(default)* | The account is created but cannot sign in. It appears under *Waiting to be let in* on the Admin screen, where it is approved — as a user or an administrator — or rejected. The person is told plainly that they are waiting, rather than being handed a password that silently does nothing. |
+| **Anyone can create a working account** | Signed straight in, as a user. |
+| **No signup link** | Administrators add people from the Admin screen. |
+
+The default is approval rather than open because this system holds a company's
+filed returns: the link is there and it works, but it does not hand out access
+to those records to whoever finds the page.
 
 There are two roles. **Users** upload, review and post. **Administrators** also
 manage people, change processing settings, and reset a return period.
