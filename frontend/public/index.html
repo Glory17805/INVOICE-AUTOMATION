@@ -65,6 +65,10 @@
       <button class="btn ghost" id="btn-reset" title="Discard posted rows and start this period again">Reset</button>
     </div>
 
+    <!-- Shown only when Claude was configured but could not be reached, so that
+         "every invoice is being read offline" is never a silent condition. -->
+    <div id="reader-banner" hidden></div>
+
     <!-- ===== Inbox ===== -->
     <section class="page" id="screen-inbox">
       <header>

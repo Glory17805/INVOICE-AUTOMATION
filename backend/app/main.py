@@ -106,9 +106,21 @@ def info() -> dict:
     # Every period the queue refers to, whether or not a workbook exists yet.
     queued = {d["period"] for d in documents if d.get("period")}
     known = sorted(set(workbook.available_periods()) | queued, key=periods.sort_key, reverse=True)
+
+    # Holding a credential is not the same as Claude having answered. An
+    # expired key, an empty balance or an unreachable network all fall back to
+    # the offline reader, and reporting the *configured* reader would tell
+    # someone their invoices were read by Claude when none of them were. The
+    # most recent document says what actually happened.
+    last_read = next((d for d in documents if d.get("reader")), None)
+    effective = last_read.get("reader") if last_read else None
+    reader_note = last_read.get("reader_note") if last_read else None
+
     return {
         **workbook.workbook_info(),
         "reader": "claude" if has_credentials() else "heuristic",
+        "reader_effective": effective,
+        "reader_note": reader_note,
         "model": extraction_model() if has_credentials() else None,
         "credential_source": credential_source(),
         "approval_mode": approval_mode(),

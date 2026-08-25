@@ -221,13 +221,47 @@ async function loadInfo() {
   $("#brand-name").textContent = state.info.company;
   $("#brand-gstin").textContent = state.info.gstin;
 
-  const offline = state.info.reader !== "claude";
-  $("#reader-dot").className = `dot${offline ? " warn" : ""}`;
-  $("#reader-label").textContent = offline ? "Offline reader" : "Claude reader";
-  $("#reader-label").title = offline
-    ? "No API key configured. Text-layer PDFs are read in full; scans cannot be read. "
-      + "Add ANTHROPIC_API_KEY to backend/.env — no restart needed."
-    : `Reading with ${state.info.model}.`;
+  /* Three states, not two. Holding a key is not the same as Claude answering:
+     an expired key, an exhausted balance or a dropped network all fall back to
+     the offline reader. Saying "Claude reader" through that would be telling
+     someone their invoices were read by a model that never saw them. */
+  const configured = state.info.reader === "claude";
+  const effective = state.info.reader_effective;
+  const degraded = configured && effective === "heuristic";
+
+  const dot = $("#reader-dot");
+  const label = $("#reader-label");
+
+  if (!configured) {
+    dot.className = "dot warn";
+    label.textContent = "Offline reader";
+    label.title = "No API key configured. Text-layer PDFs are read in full; scans cannot be read. "
+      + "Add ANTHROPIC_API_KEY to backend/.env — no restart needed.";
+  } else if (degraded) {
+    dot.className = "dot warn";
+    label.textContent = "Claude unavailable";
+    label.title = state.info.reader_note
+      ? `Falling back to the offline reader. ${state.info.reader_note}`
+      : "Falling back to the offline reader.";
+  } else {
+    dot.className = "dot";
+    label.textContent = "Claude reader";
+    label.title = `Reading with ${state.info.model}.`;
+  }
+
+  const banner = $("#reader-banner");
+  if (banner) {
+    banner.hidden = !degraded;
+    if (degraded) {
+      banner.textContent = "";
+      banner.append(alertBox("warning", [
+        el("strong", { textContent: "Claude could not be reached, so invoices are being read offline. " }),
+        state.info.reader_note || "",
+        " Scans and photos cannot be read at all this way, and text-layer PDFs get a "
+        + "simpler read that is worth checking.",
+      ]));
+    }
+  }
 
   renderPeriods();
 }

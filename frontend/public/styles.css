@@ -267,6 +267,11 @@ tfoot td {
 .dropzone .big { font-weight: 600; color: var(--ink); }
 .dropzone .hint { font-size: 0.8rem; color: var(--ink-3); margin-top: 0.2rem; }
 
+/* Degraded-reader notice. Sits above every screen, not just the inbox, because
+   it affects anything that was read while it was true. */
+#reader-banner { padding: 0 1.4rem; margin-top: 0.9rem; }
+#reader-banner .alert { margin: 0; }
+
 /* The other way invoices arrive: a folder a mail rule or scanner writes into. */
 .intake {
   display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
