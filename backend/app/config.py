@@ -103,11 +103,55 @@ def approval_mode() -> str:
     return mode if mode in {"every_row", "flagged_only"} else "flagged_only"
 
 
+# Which reader the pipeline uses. Claude and Gemini are interchangeable at the
+# `extract(path) -> ExtractedInvoice` boundary; the offline reader is the
+# fallback when neither has usable credentials.
+PROVIDERS = ("claude", "gemini")
+
+DEFAULT_MODELS = {
+    "claude": "claude-opus-5",
+    "gemini": "gemini-2.5-flash",
+}
+
+
+def extraction_provider() -> str:
+    """Which LLM reads invoices.
+
+    Set GST_EXTRACTION_PROVIDER to pin one. Left unset, whichever provider has
+    a key wins, so adding a key is the only step needed to switch - and a key
+    that is present but broken does not silently route to the other provider's
+    bill.
+    """
+    configured = setting("GST_EXTRACTION_PROVIDER").lower()
+    if configured in PROVIDERS:
+        return configured
+    if gemini_key():
+        return "gemini"
+    if anthropic_credentials():
+        return "claude"
+    return "gemini" if configured == "" else "claude"
+
+
+def gemini_key() -> str:
+    return setting("GEMINI_API_KEY") or setting("GOOGLE_API_KEY")
+
+
+def gemini_model() -> str:
+    return setting("GST_GEMINI_MODEL", DEFAULT_MODELS["gemini"])
+
+
 def extraction_model() -> str:
-    return setting("GST_EXTRACTION_MODEL", "claude-opus-5")
+    """The model the active provider will use."""
+    configured = setting("GST_EXTRACTION_MODEL")
+    provider = extraction_provider()
+    if provider == "gemini":
+        return setting("GST_GEMINI_MODEL") or (
+            configured if configured.startswith("gemini") else DEFAULT_MODELS["gemini"]
+        )
+    return configured or DEFAULT_MODELS["claude"]
 
 
-def has_credentials() -> bool:
+def anthropic_credentials() -> bool:
     """Whether the Claude SDK has any credential to authenticate with.
 
     An unset ANTHROPIC_API_KEY does not mean there are no credentials: the SDK
@@ -123,8 +167,15 @@ def has_credentials() -> bool:
     return profile_dir.is_dir() and any(profile_dir.iterdir())
 
 
+def has_credentials() -> bool:
+    """Whether the active provider can authenticate at all."""
+    return bool(gemini_key()) if extraction_provider() == "gemini" else anthropic_credentials()
+
+
 def credential_source() -> str | None:
     """Which credential the app will use, for display on the header."""
+    if extraction_provider() == "gemini":
+        return "API key" if gemini_key() else None
     if setting("ANTHROPIC_API_KEY"):
         return "API key"
     if setting("ANTHROPIC_AUTH_TOKEN"):

@@ -17,10 +17,15 @@ from pathlib import Path
 from . import store, workbook
 from . import period as periods
 from .config import (
-    ARCHIVE_DIR, INCOMING_DIR, IRA_INNOVATIONS, approval_mode, ensure_dirs, has_credentials,
+    ARCHIVE_DIR, INCOMING_DIR, IRA_INNOVATIONS, approval_mode, ensure_dirs,
+    extraction_provider, has_credentials,
 )
+from .extract import gemini as gemini_extractor
 from .extract import heuristic
 from .extract import llm as llm_extractor
+
+# Providers are interchangeable at extract(path) -> ExtractedInvoice.
+_READERS = {"claude": llm_extractor, "gemini": gemini_extractor}
 from .extract.pdftext import document_text
 from .extract.split import find_segments, write_segment
 from .gst import rules
@@ -172,17 +177,34 @@ def capture_path(path: Path, source: str = "scan") -> list[dict]:
 # --------------------------------------------------------------------------- #
 
 def _read_document(path: Path) -> tuple[ExtractedInvoice, str, str | None]:
-    """Run the LLM reader, falling back to the offline reader if it cannot."""
-    if has_credentials():
-        try:
-            return llm_extractor.extract(path), "claude", None
-        except llm_extractor.ExtractionUnavailable as exc:
-            return heuristic.extract(path), "heuristic", str(exc)
-        except Exception as exc:  # unexpected: still capture rather than lose the document
-            return heuristic.extract(path), "heuristic", f"Reader failed: {exc}"
-    return heuristic.extract(path), "heuristic", (
-        "No Claude credentials configured - add ANTHROPIC_API_KEY to .env for a full read."
-    )
+    """Read one document with the configured provider.
+
+    Returns (extracted, reader, note). `reader` is the reader that ACTUALLY
+    ran, not the one configured - a provider that is configured but refuses
+    (no credit, exhausted quota, rejected key) falls through to the offline
+    reader, and the note says why so nobody has to guess.
+    """
+    provider = extraction_provider()
+    reader = _READERS.get(provider)
+
+    if reader is None:
+        return heuristic.extract(path), "heuristic", f"Unknown extraction provider {provider!r}."
+
+    if not has_credentials():
+        return heuristic.extract(path), "heuristic", _no_credentials_note(provider)
+
+    try:
+        return reader.extract(path), provider, None
+    except llm_extractor.ExtractionUnavailable as exc:
+        return heuristic.extract(path), "heuristic", str(exc)
+    except Exception as exc:  # unexpected: still capture rather than lose the document
+        return heuristic.extract(path), "heuristic", f"Reader failed: {exc}"
+
+
+def _no_credentials_note(provider: str) -> str:
+    if provider == "gemini":
+        return "No GEMINI_API_KEY configured - add it to backend/.env for a full read."
+    return "No Claude credentials configured - add ANTHROPIC_API_KEY to backend/.env for a full read."
 
 
 def evaluate(doc: ExtractedInvoice, *, exclude_key: tuple[str, str | None] | None = None) -> tuple[GstTreatment, ValidationResult]:
