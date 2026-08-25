@@ -7,6 +7,8 @@ pinned by the behaviour that would otherwise fail silently.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -282,6 +284,96 @@ def test_the_tax_position_is_recomputed_after_a_posting(cached_workbook):
 
     after = workbook.tax_payable_summary(PERIOD).output_tax["cgst"]
     assert after == pytest.approx(before + 90.0)
+
+
+# --------------------------------------------------------------------------- #
+# The document store
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def isolated_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "STORE_PATH", tmp_path / "store.json")
+    store._prepared.clear()
+    yield tmp_path
+    store._prepared.clear()
+
+
+def test_a_document_round_trips(isolated_store):
+    added = store.add({"filename": "one.pdf", "status": "new"})
+    fetched = store.get(added["id"])
+
+    assert fetched["filename"] == "one.pdf"
+    assert fetched["status"] == "new"
+    # add() stamps the things every document is expected to carry.
+    assert fetched["received_at"]
+    assert fetched["history"][0]["event"] == "received"
+
+
+def test_updates_merge_and_record_history(isolated_store):
+    added = store.add({"filename": "one.pdf", "status": "new"})
+    updated = store.update(added["id"], {"status": "ready", "period": "May-26"}, event="read")
+
+    assert updated["status"] == "ready"
+    assert updated["period"] == "May-26"
+    assert updated["filename"] == "one.pdf", "an update must not drop untouched fields"
+    assert [h["event"] for h in updated["history"]] == ["received", "read"]
+
+
+def test_documents_come_back_newest_first(isolated_store):
+    store.add({"filename": "older.pdf", "received_at": "2026-05-01T10:00:00+00:00"})
+    store.add({"filename": "newer.pdf", "received_at": "2026-07-01T10:00:00+00:00"})
+
+    assert [d["filename"] for d in store.all_documents()] == ["newer.pdf", "older.pdf"]
+
+
+def test_operations_on_an_unknown_document_are_not_errors(isolated_store):
+    assert store.get("nope") is None
+    assert store.update("nope", {"status": "ready"}) is None
+    assert store.delete("nope") is False
+
+
+def test_delete_and_clear(isolated_store):
+    first = store.add({"filename": "one.pdf"})
+    store.add({"filename": "two.pdf"})
+
+    assert store.delete(first["id"]) is True
+    assert len(store.all_documents()) == 1
+
+    store.clear()
+    assert store.all_documents() == []
+
+
+def test_an_existing_json_queue_is_imported_and_kept(isolated_store):
+    """Nobody should lose their queue to a storage change - and if the import
+    misreads something, the original file has to still be there."""
+    legacy = isolated_store / "store.json"
+    legacy.write_text(json.dumps({"documents": [
+        {"id": "aaa", "filename": "carried.pdf", "status": "ready",
+         "period": "May-26", "received_at": "2026-05-02T09:00:00+00:00"},
+        {"id": "bbb", "filename": "also.pdf", "status": "posted",
+         "period": "May-26", "received_at": "2026-05-03T09:00:00+00:00"},
+    ]}), encoding="utf-8")
+
+    documents = store.all_documents()
+
+    assert [d["filename"] for d in documents] == ["also.pdf", "carried.pdf"]
+    assert store.get("aaa")["status"] == "ready"
+    # Kept, renamed - not deleted.
+    assert not legacy.exists()
+    assert (isolated_store / "store.json.imported").exists()
+
+
+def test_the_import_runs_once_and_cannot_duplicate_a_queue(isolated_store):
+    legacy = isolated_store / "store.json"
+    legacy.write_text(json.dumps({"documents": [
+        {"id": "aaa", "filename": "carried.pdf", "received_at": "2026-05-02T09:00:00+00:00"},
+    ]}), encoding="utf-8")
+
+    store.all_documents()
+    store._prepared.clear()          # as though the process had restarted
+    store.all_documents()
+
+    assert len(store.all_documents()) == 1
 
 
 def test_editing_the_file_underneath_is_noticed(cached_workbook):
