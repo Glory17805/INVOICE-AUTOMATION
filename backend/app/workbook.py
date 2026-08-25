@@ -319,12 +319,46 @@ def _row_is_empty(ws, spec: SheetSpec, row: int) -> bool:
 # Reading registers
 # --------------------------------------------------------------------------- #
 
+def _tax_cell(ws, row: int, column: str, taxable: Decimal, rate: Decimal,
+              _seen: frozenset[str] = frozenset()) -> Decimal:
+    """Evaluate one tax cell, whether it holds a formula or a typed number.
+
+    A row this application posted carries the sheet's own formula idiom; a row
+    somebody typed into Excel carries a plain number. Both are legitimate
+    entries, so each cell is evaluated on its own terms. Inferring the whole
+    CGST/SGST-vs-IGST split from whether *one* cell happens to be a formula
+    reads a hand-typed inter-state sale as IGST plus a CGST/SGST that is not on
+    the sheet at all, which overstates output tax on the Tax Payable screen.
+    """
+    raw = _cell(ws, column, row).value
+    if not _is_formula(raw):
+        return _q(_number(raw))
+
+    formula = str(raw).upper().replace(" ", "").lstrip("=")
+
+    # The half-rate form is checked first: "J8*I8/2" also contains "J8*I8".
+    if formula in (f"J{row}*I{row}/2", f"I{row}*J{row}/2"):
+        return _q(taxable * rate / Decimal("2"))
+    if formula in (f"I{row}*J{row}", f"J{row}*I{row}"):
+        return _q(taxable * rate)
+
+    # "=L8" in the SGST column mirrors the CGST cell beside it. The guard stops
+    # a pair of cells that point at each other from recursing forever.
+    if formula in {f"{letter}{row}" for letter in "KLM"} and formula not in _seen:
+        return _tax_cell(ws, row, formula[0], taxable, rate, _seen | {formula})
+
+    # An unrecognised formula: openpyxl reads formulas, not their results, and
+    # guessing at one would be worse than declining to score it.
+    return Decimal("0.00")
+
+
 def _gstr1_amounts(ws, row: int) -> dict[str, Decimal]:
     """Evaluate a GSTR-1 row the way the sheet's own formulas would.
 
-    Taxable value is either typed directly or derived from bags x bag rate. The
-    split is read from column K: a formula there means the row is coded IGST, a
-    literal zero means it is coded CGST + SGST.
+    Taxable value is either typed directly or derived from bags x bag rate.
+    IGST, CGST and SGST are each read from their own column, so a row typed by
+    hand in Excel reads back as what it actually says rather than as whatever
+    this application's formula pattern would have put there.
     """
     taxable_raw = _cell(ws, "J", row).value
     if _is_formula(taxable_raw):
@@ -333,14 +367,9 @@ def _gstr1_amounts(ws, row: int) -> dict[str, Decimal]:
         taxable = _q(_number(taxable_raw))
 
     rate = _number(_cell(ws, "I", row).value)
-    igst_raw = _cell(ws, "K", row).value
-
-    if _is_formula(igst_raw):
-        igst, cgst, sgst = _q(taxable * rate), Decimal("0.00"), Decimal("0.00")
-    else:
-        igst = _q(_number(igst_raw))
-        half = _q(taxable * rate / Decimal("2"))
-        cgst = sgst = half
+    igst = _tax_cell(ws, row, "K", taxable, rate)
+    cgst = _tax_cell(ws, row, "L", taxable, rate)
+    sgst = _tax_cell(ws, row, "M", taxable, rate)
     return {
         "taxable": taxable, "rate": rate, "igst": igst, "cgst": cgst, "sgst": sgst,
         "total": _q(taxable + igst + cgst + sgst),

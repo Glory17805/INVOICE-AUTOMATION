@@ -307,3 +307,103 @@ def test_a_grown_gstr1_row_inherits_the_template_formats(fresh_workbook):
     ws = load_workbook(fresh_workbook)["GSTR-1"]
     assert ws[f"B{grown}"].number_format == "d-mmm-yy"
     assert ws[f"I{grown}"].number_format == "0%"
+
+
+# --------------------------------------------------------------------------- #
+# Reading back rows a person typed into Excel by hand
+#
+# The client has kept these sheets by hand for years and will keep doing it
+# alongside the app. A typed row carries plain numbers where a posted row
+# carries formulas, and both have to read back as what they actually say.
+# --------------------------------------------------------------------------- #
+
+def _type_row_by_hand(path, row: int, **cells) -> None:
+    """Write literal values into GSTR-1 the way a person entering data would."""
+    wb = load_workbook(path)
+    ws = wb["GSTR-1"]
+    for column, value in cells.items():
+        ws[f"{column}{row}"] = value
+    wb.save(path)
+    wb.close()
+
+
+def test_a_hand_typed_inter_state_sale_is_not_read_as_cgst_and_sgst_too(fresh_workbook):
+    """The defect this guards: inferring the split from one cell's *type*.
+
+    A posted inter-state row puts a formula in K. A person typing the same sale
+    puts a number there. Treating "K is not a formula" as "this row must be
+    CGST + SGST" invents a tax that is not on the sheet - here it would add
+    900 + 900 to a row whose only tax is 1800 of IGST.
+    """
+    _type_row_by_hand(
+        fresh_workbook, 8,
+        C="HAND-INTER-1", E="Karnataka Buyer", D="29AAFCB7707D1ZQ",
+        I=0.18, J=10000, K=1800, L=None, M=None, N=11800,
+    )
+
+    rows = workbook.read_register(DocumentType.SALES, PERIOD)
+    assert len(rows) == 1
+    values = rows[0]["values"]
+    assert values["IGST"] == "1,800.00"
+    assert values["CGST"] == "0.00"
+    assert values["SGST"] == "0.00"
+    assert values["Invoice Amount"] == "11,800.00"
+
+    # And it must not inflate the position the Tax Payable screen reports.
+    summary = workbook.tax_payable_summary(PERIOD)
+    assert summary.output_tax["igst"] == pytest.approx(1800.0)
+    assert summary.output_tax["cgst"] == pytest.approx(0.0)
+    assert summary.output_tax["sgst"] == pytest.approx(0.0)
+
+
+def test_a_hand_typed_intra_state_sale_reads_back_as_typed(fresh_workbook):
+    """The complement: typed CGST/SGST is taken at face value, not recomputed."""
+    _type_row_by_hand(
+        fresh_workbook, 8,
+        C="HAND-INTRA-1", E="Prasuna Reddy",
+        I=0.18, J=10000, K=0, L=900, M=900, N=11800,
+    )
+
+    values = workbook.read_register(DocumentType.SALES, PERIOD)[0]["values"]
+    assert values["IGST"] == "0.00"
+    assert values["CGST"] == "900.00"
+    assert values["SGST"] == "900.00"
+    assert values["Invoice Amount"] == "11,800.00"
+
+
+def test_the_sheets_own_formula_idioms_still_evaluate(fresh_workbook):
+    """Posted rows are unaffected: both formula patterns evaluate as before."""
+    # Intra-state, as _write_sales lays it out: K=0, L==J*I/2, M==L.
+    post(invoice(
+        invoice_number="FORMULA-INTRA", invoice_date="31-May-2026",
+        supplier_gstin=IRA_INNOVATIONS.gstin, supplier_name="Ira Innovations",
+        recipient_name="Prasuna Reddy", place_of_supply="Andhra Pradesh",
+        taxable_value=4881.10, gst_rate_percent=18,
+    ))
+    # Inter-state: K==I*J, L=0, M==L.
+    post(invoice(
+        invoice_number="FORMULA-INTER", invoice_date="12-May-2026",
+        supplier_gstin=IRA_INNOVATIONS.gstin, supplier_name="Ira Innovations",
+        recipient_name="Karnataka Buyer", recipient_gstin="29AAFCB7707D1ZQ",
+        place_of_supply="Karnataka", taxable_value=10000, gst_rate_percent=18,
+    ))
+
+    by_number = {r["values"]["Invoice no"]: r["values"] for r in
+                 workbook.read_register(DocumentType.SALES, PERIOD)}
+
+    intra = by_number["FORMULA-INTRA"]
+    assert (intra["CGST"], intra["SGST"], intra["IGST"]) == ("439.30", "439.30", "0.00")
+
+    inter = by_number["FORMULA-INTER"]
+    assert (inter["IGST"], inter["CGST"], inter["SGST"]) == ("1,800.00", "0.00", "0.00")
+
+
+def test_an_unreadable_formula_scores_zero_rather_than_guessing(fresh_workbook):
+    """openpyxl reads formulas, not results. A formula we cannot evaluate is
+    reported as nothing rather than as an invented number."""
+    _type_row_by_hand(
+        fresh_workbook, 8,
+        C="ODD-1", E="Someone", I=0.18, J=10000, K="=SOMETHING_ELSE(1)", L=0, M=0,
+    )
+    values = workbook.read_register(DocumentType.SALES, PERIOD)[0]["values"]
+    assert values["IGST"] == "0.00"
