@@ -245,24 +245,25 @@ handles this correctly and now says so plainly, but the system is running in its
 degraded mode until the account is topped up. **Nothing in the code will fix
 this.**
 
-### 4.2 Per-user authentication and an attribution trail
+### 4.2 Per-user authentication and an attribution trail — **DONE**
 
-The current key identifies a deployment, not a person. For a filing system the
-question "who posted this row?" is a reasonable one to be asked by an auditor,
-and today there is no answer: the document history records *that* a row was
-posted and whether validation was overridden, but not by whom.
+> Delivered in a later round, along with the full application UI. Accounts with
+> scrypt-hashed passwords, sessions stored only as hashes, two roles, and an
+> `activity` table recording who did what. `posted_by` is carried onto every
+> posted document, so the override action — posting something that failed
+> validation — now names the person who chose to. The Admin screen surfaces
+> overrides as their own list.
+>
+> The deployment-wide key survives as a *service* credential for scripts,
+> authenticating as a synthetic `service-key` principal so an automated posting
+> is never mistaken for one a person approved.
 
-Worth doing together: user accounts, a session or token per user, and a `posted_by`
-field carried onto the document history and into the archive path. This also
-allows the override action — posting a document that failed validation — to be
-attributed, which is the single most audit-sensitive action in the system.
+### 4.3 Protect the key against guessing — **DONE**
 
-### 4.3 Protect the key against guessing
-
-There is no rate limiting. A shared secret on an exposed port invites offline
-guessing, and nothing currently slows that down or records the attempt. A simple
-per-IP failure counter with a backoff, plus a logged warning, would be
-proportionate. Pairs naturally with 4.2.
+> Delivered with 4.2. Failed sign-ins are throttled per account-and-address with
+> a doubling backoff to a fifteen-minute ceiling, and each failure is written to
+> the audit trail. Sign-in answers identically for a wrong password and an
+> unknown account, so it cannot be used to discover who has an account.
 
 ### 4.4 TLS
 
@@ -309,7 +310,15 @@ today needs it; the constraint should be understood before someone reaches for
 
 ### 4.10 Smaller items
 
-- **No frontend tests.** All 135 tests are backend. The UI is exercised by hand.
+- **No frontend tests.** All 191 tests are backend. The UI is exercised by hand,
+  plus a static check that every element the script reaches for exists in the
+  markup and every routed renderer is defined. That catches missing wiring, not
+  behaviour — a browser-driving test would.
+- **The suite was making live model calls.** Three tests describing the *offline*
+  reader never pinned it, so they read invoices through whichever API key
+  happened to be in `.env`. They passed only because the Anthropic account was
+  broken; a working Gemini key turned them red. Now pinned — that file went from
+  ~270s to 1.3s, which is the giveaway that real calls were happening.
 - **No CI.** The suite runs when someone remembers. A hook or pipeline would fix
   the class of problem this audit found in §1.3 — a corruption committed unnoticed.
 - **Secrets sit in plaintext** in `backend/.env`. Acceptable on a single trusted

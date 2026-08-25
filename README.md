@@ -85,24 +85,25 @@ reason, do not run it with `--workers 2`.
 
 ### Access
 
-By default the API is **open** — anything that can reach the port can download the
-workbook and read every stored invoice. That is the right default while both halves run
-on one machine, and the wrong one the moment it is reachable from anywhere else. Set a
-key before that happens:
+Every route but `/api/health` and the sign-in routes requires a session token, obtained
+by signing in and sent as `Authorization: Bearer`. Passwords are hashed with scrypt;
+only the *hash* of a session token is stored, so a copy of the database is not a set of
+live sessions. Repeated failed sign-ins are throttled per account and address.
+
+The frontend server holds no credentials at all and publishes none to the browser — it
+only tells the page where the API is.
+
+**For scripts and integrations**, an optional `GST_API_KEY` in `backend/.env`
+authenticates as a synthetic service principal with administrator rights, recorded in
+the audit trail as `service-key` so an automated posting is never mistaken for one a
+person approved:
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(32))"   # generate one
-# put it in backend/.env as GST_API_KEY=...
+curl -H "Authorization: Bearer $KEY" http://127.0.0.1:8000/api/info
 ```
 
-The backend then requires it on every route but `/api/health`, as an `X-API-Key` header
-or a bearer token, checked in constant time. `frontend/run.ps1` reads the same value out
-of `backend/.env`, so there is one place to set it. Startup states which mode is in
-force.
-
-This draws a boundary around the **network**, not around a person: one key for the whole
-deployment, and anyone who can load the frontend can read it out of `/config.js`.
-Per-user accounts are listed under future work.
+Leave it unset if nothing machine-driven needs in.
 
 ### Running them apart
 
@@ -138,14 +139,42 @@ the system reproduces the client's own numbers.
 
 ---
 
-## The four screens
+## Signing in
+
+Everyone has their own account. The first person to open a fresh install is
+offered a signup form and becomes the administrator; after that, administrators
+add people from the Admin screen — an open signup form on a system holding a
+company's tax records is not a feature.
+
+There are two roles. **Users** upload, review and post. **Administrators** also
+manage people, change processing settings, and reset a return period.
+
+Every action that touches the workbook is recorded against the person who took
+it, including the deliberate decision to post something that failed validation.
+That is the question an auditor asks first.
+
+Forgotten passwords issue a reset link that expires in an hour. No mail server
+is wired up, so the link is written to the backend log, and an administrator can
+generate one directly from the Admin screen. The anonymous *forgot password*
+route never returns the token to whoever asked for it, and answers identically
+whether or not the address exists — otherwise it becomes a way to discover who
+has an account here.
+
+## The screens
 
 | Screen | What it does |
 |---|---|
-| **Invoice Inbox** | Everything that has arrived, already classified. Drag PDFs in, or drop them into `data/dropbox` and press *Check watch folder*. |
-| **Quick Review** | The original document beside what the reader found. Correct any field and the tax treatment recalculates before you confirm. |
-| **GST Registers** | The rows as they now exist in the workbook — same four sheets, same columns. The period picker in the header chooses which return you are looking at. |
-| **Tax Payable** | The net position for the selected period, recomputed from the registers as rows are posted. |
+| **Dashboard** | Totals at a glance, a drop target, and the most recent invoices. |
+| **Upload** | Drag and drop or browse. Type and size are checked before the upload starts as well as on the server. |
+| **Processing** | The pipeline's actual steps as they happen — received, read, extracted, checked, ready — not a spinner. A failure names its cause and offers a way forward. |
+| **Queue** | Everything waiting on a person, grouped, with bulk posting. |
+| **Review** | The original document beside what the reader found, its line items, and the tax treatment. Correct anything and the treatment recalculates before you post. |
+| **History** | Every invoice ever seen, searchable by number, party or filename, filterable by state. |
+| **Registers** | The rows as they now stand in the workbook — same four sheets, same columns. |
+| **Tax position** | The net position for the selected period, recomputed as rows are posted. |
+| **Email intake** | How invoices arrive without anyone uploading them, and what is waiting. |
+| **Settings** | Profile, password, currency and date format, notification preferences. |
+| **Admin** | People and roles, failed invoices, posted-despite-a-failed-check, the activity log, and system state. |
 
 ---
 
@@ -315,14 +344,27 @@ the state name shown to a reviewer is now the correct one.
 
 ## API
 
-Every route except `/api/health` requires the `X-API-Key` header once `GST_API_KEY` is
-set; with it unset the API is open.
+Every route except the four below requires `Authorization: Bearer <session token>`.
+Administrator-only routes are marked.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Liveness. Never requires a key |
+| `GET` | `/api/health` | Liveness. Never requires credentials |
+| `GET` | `/api/bootstrap` | Whether this install still needs its first account |
+| `POST` | `/api/auth/login` `/api/auth/signup` | Sign in; create the first account |
+| `POST` | `/api/auth/forgot` `/api/auth/reset` | Begin and complete a password reset |
+| `GET` `PATCH` | `/api/auth/me` | The signed-in person; edit their profile |
+| `POST` | `/api/auth/password` `/api/auth/logout` | Change password; end this session |
+| `GET` | `/api/dashboard` | Totals, recent invoices, sources |
+| `GET` | `/api/documents/{id}/progress` | Pipeline steps and percentage, for Processing |
+| `GET` | `/api/email/status` | Watch-folder state and processing rules |
+| `GET` `PUT` | `/api/settings` | Preferences (`PUT` is admin-only) |
+| `GET` `POST` | `/api/admin/users` | People *(admin)* |
+| `PATCH` `DELETE` | `/api/admin/users/{id}` | Role, active state, removal *(admin)* |
+| `POST` | `/api/admin/users/{id}/reset-link` | Issue a reset link directly *(admin)* |
+| `GET` | `/api/admin/activity` `/api/admin/stats` | Audit trail; system state *(admin)* |
 | `GET` | `/api/info` | Company, periods, reader (configured *and* effective), counts |
-| `GET` `POST` | `/api/documents` | List / upload. Upload returns before reading; poll for status |
+| `GET` `POST` | `/api/documents` | Search / upload. Upload returns before reading; poll for status |
 | `POST` | `/api/ingest/folder` | Pick up the watch folder |
 | `GET` | `/api/documents/{id}/file` | The original, for the review pane |
 | `PATCH` | `/api/documents/{id}` | Apply corrections, re-run rules |
