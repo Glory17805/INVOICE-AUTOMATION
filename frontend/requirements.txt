@@ -1,0 +1,2 @@
+# The frontend server uses only the Python standard library.
+# Nothing to install.
