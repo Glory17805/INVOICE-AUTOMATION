@@ -34,12 +34,17 @@ SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".txt", 
 # Stage 1: capture
 # --------------------------------------------------------------------------- #
 
-def capture(data: bytes, filename: str, source: str = "upload") -> list[dict]:
-    """Store an arriving file and run every invoice in it through the pipeline.
+def stage(data: bytes, filename: str, source: str = "upload") -> list[dict]:
+    """Store an arriving file and register every invoice in it, without reading.
 
     One file is not necessarily one invoice: billing software exports a month's
     invoices as a single print run. Each invoice found becomes its own document,
     with its own pages, so none of them is silently dropped.
+
+    Splitting is local and quick; reading is a model call per invoice. Keeping
+    them apart lets an upload answer as soon as the documents exist, and read
+    them afterwards, rather than holding the request open for the length of
+    every call in the batch.
     """
     ensure_dirs()
     safe_name = Path(filename).name
@@ -62,24 +67,23 @@ def capture(data: bytes, filename: str, source: str = "upload") -> list[dict]:
         doc_id = store.new_id()
         stored = INCOMING_DIR / f"{doc_id}__{safe_name}"
         staged.replace(stored)
-        store.add({
+        return [store.add({
             "id": doc_id,
             "filename": safe_name,
             "stored_path": str(stored),
             "source": source,
             "status": DocStatus.NEW.value,
-        })
-        return [process(doc_id)]
+        })]
 
     stem = Path(safe_name).stem
-    ids: list[str] = []
+    records: list[dict] = []
     try:
         for position, segment in enumerate(segments, start=1):
             doc_id = store.new_id()
             part_name = f"{stem} [{segment.label}]{suffix}"
             stored = INCOMING_DIR / f"{doc_id}__{part_name}"
             write_segment(staged, segment, stored)
-            store.add({
+            records.append(store.add({
                 "id": doc_id,
                 "filename": part_name,
                 "stored_path": str(stored),
@@ -90,12 +94,39 @@ def capture(data: bytes, filename: str, source: str = "upload") -> list[dict]:
                 "page_label": segment.label,
                 "position": position,
                 "of": len(segments),
-            })
-            ids.append(doc_id)
+            }))
     finally:
         staged.unlink(missing_ok=True)
 
-    return [process(doc_id) for doc_id in ids]
+    return records
+
+
+def capture(data: bytes, filename: str, source: str = "upload") -> list[dict]:
+    """Stage an arriving file and read every invoice in it, in one call.
+
+    The synchronous path, used by the watch folder and by the tests. The HTTP
+    upload route stages and reads separately so it can answer immediately.
+    """
+    return [process(record["id"]) for record in stage(data, filename, source)]
+
+
+def process_many(doc_ids: list[str]) -> None:
+    """Read a batch of already-staged documents.
+
+    This runs detached from any request, so nothing here may raise: a document
+    that cannot be read has to be recorded as failed *on the document*, where a
+    reviewer will see it, rather than disappearing into a traceback on a
+    background task nobody is watching.
+    """
+    for doc_id in doc_ids:
+        try:
+            process(doc_id)
+        except Exception as exc:  # noqa: BLE001 - a background task must not die
+            store.update(
+                doc_id,
+                {"status": DocStatus.FAILED.value, "error": f"Could not read this document: {exc}"},
+                event="read_failed",
+            )
 
 
 def capture_path(path: Path, source: str = "scan") -> list[dict]:

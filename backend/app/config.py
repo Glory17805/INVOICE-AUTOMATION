@@ -135,6 +135,33 @@ def credential_source() -> str | None:
     return None
 
 
+def api_key() -> str:
+    """The shared secret the API requires, or "" to run unauthenticated.
+
+    This is a network boundary, not a user identity: it stops the API from
+    being callable by anything that can merely reach the port, which is the
+    exposure that matters the moment this leaves localhost. Everything it
+    guards - the workbook, the original invoices - is readable by anyone who
+    holds the key, so it is a single-tenant internal control and no substitute
+    for real per-user authentication.
+    """
+    return setting("GST_API_KEY")
+
+
+def max_upload_bytes() -> int:
+    """Largest single upload accepted, so one file cannot exhaust the disk."""
+    try:
+        megabytes = float(setting("GST_MAX_UPLOAD_MB", "25"))
+    except ValueError:
+        megabytes = 25.0
+    return int(max(megabytes, 1) * 1024 * 1024)
+
+
+def lock_path() -> Path:
+    """The file whose lock marks this data directory as claimed."""
+    return DATA_DIR / "backend.lock"
+
+
 def frontend_origins() -> list[str]:
     """Which origins the browser may call this API from.
 

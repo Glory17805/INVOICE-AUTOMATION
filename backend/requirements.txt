@@ -1,7 +1,18 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-python-multipart>=0.0.9
-pydantic>=2.6
-openpyxl>=3.1
-pypdf>=4.2
-anthropic>=0.40
+# Runtime dependencies.
+#
+# Each line carries a lower bound (the oldest version this code is known to
+# work against) and an upper bound below the next major release. The upper
+# bound is the point: `anthropic>=0.40` silently resolved to 1.0.0 on a fresh
+# install, across a major version boundary, and nothing said so. It happened to
+# remain compatible. The next one will not, and a working checkout should not
+# break because someone installed it on a Tuesday.
+#
+# Raising a ceiling is a deliberate act: bump it, run the suite, commit.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+python-multipart>=0.0.20,<0.1
+pydantic>=2.11,<3.0
+openpyxl>=3.1,<4.0
+pypdf>=5.4,<6.0
+anthropic>=1.0,<2.0

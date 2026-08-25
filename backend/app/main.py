@@ -7,38 +7,81 @@ and debugged independently of one another.
 
 from __future__ import annotations
 
+import logging
 import mimetypes
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import pipeline, store, workbook
+from . import pipeline, singleton, store, workbook
 from . import period as periods
 from .config import (
-    DATA_DIR, approval_mode, credential_source, ensure_dirs, extraction_model, frontend_origins,
-    has_credentials,
+    DATA_DIR, api_key, approval_mode, credential_source, ensure_dirs, extraction_model,
+    frontend_origins, has_credentials, lock_path, max_upload_bytes,
 )
 from .models import DocStatus, DocumentType
+from .security import HEADER as API_KEY_HEADER, ApiKeyMiddleware
+
+log = logging.getLogger("gst.backend")
 
 DROP_DIR = DATA_DIR / "dropbox"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Claim the data directory, prepare it, and give it up cleanly on exit."""
+    ensure_dirs()
+    DROP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Before anything opens a workbook: two processes sharing this directory
+    # would overwrite each other's posted rows with no error anywhere.
+    singleton.acquire(lock_path())
+
+    # The master workbook's own period is always available; others are created
+    # on demand as invoices for them arrive.
+    workbook.ensure_working_copy(workbook.master_period())
+    _announce()
+    try:
+        yield
+    finally:
+        singleton.release()
+
+
+def _announce() -> None:
+    """Say out loud the one thing that is unsafe to get wrong silently."""
+    if api_key():
+        log.info("Authentication ON - callers must send an %s header.", API_KEY_HEADER)
+    else:
+        log.warning(
+            "Authentication OFF - anything that can reach this port can read the "
+            "workbook and every stored invoice. Set GST_API_KEY before exposing "
+            "this beyond localhost."
+        )
+    log.info("Data directory claimed: %s", DATA_DIR)
+
 
 app = FastAPI(
     title="Ira Innovations - GST Invoice Automation API",
     description="Invoice to filed return, without the manual typing.",
-    version="2.0.0",
+    version="2.1.0",
+    lifespan=lifespan,
 )
 
-# The frontend runs on its own origin, so every browser call here is
-# cross-origin and needs to be allowed explicitly.
+# Order matters: CORS is added last so it ends up outermost and its headers are
+# attached to *every* response, including the 401 the key check returns. Inside
+# it, the browser would report an opaque CORS failure instead of the real status.
+app.add_middleware(ApiKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins(),
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    # No cookies are used; the API is stateless.
+    # The key travels in a header, so the browser never attaches ambient
+    # credentials and there is no cookie to protect.
     allow_credentials=False,
 )
 
@@ -46,16 +89,7 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict:
     """Liveness probe, so the frontend can tell you when the API is not up."""
-    return {"status": "ok", "service": "gst-automation-backend"}
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    ensure_dirs()
-    DROP_DIR.mkdir(parents=True, exist_ok=True)
-    # The master workbook's own period is always available; others are created
-    # on demand as invoices for them arrive.
-    workbook.ensure_working_copy(workbook.master_period())
+    return {"status": "ok", "service": "gst-automation-backend", "auth": bool(api_key())}
 
 
 # --------------------------------------------------------------------------- #
@@ -102,25 +136,56 @@ def get_document(doc_id: str) -> dict:
 
 
 @app.post("/api/documents")
-async def upload_documents(files: list[UploadFile] = File(...)) -> dict:
-    """Capture one or more invoices arriving by upload."""
-    created, errors = [], []
+async def upload_documents(
+    request: Request,
+    background: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+) -> dict:
+    """Capture one or more invoices arriving by upload.
+
+    This answers as soon as the documents exist, before any of them has been
+    read. Reading costs a model call per invoice and a print run carries
+    eighteen, so doing it inline meant a browser holding a spinner for minutes
+    and a timeout throwing away the response to work that had in fact happened.
+
+    The documents come back in their `new` state; the caller polls until they
+    leave it.
+    """
+    limit = max_upload_bytes()
+    as_mb = f"{limit // (1024 * 1024)} MB"
+
+    # Refuse an oversized body on its declared length, before reading it.
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        raise HTTPException(413, f"That upload is larger than the {as_mb} limit.")
+
+    staged, errors = [], []
     for upload in files:
+        name = upload.filename or "document.pdf"
+        # One byte past the limit is enough to know it is over it.
+        data = await upload.read(limit + 1)
+        if len(data) > limit:
+            errors.append(f"{name}: larger than the {as_mb} limit.")
+            continue
         try:
-            created.extend(pipeline.capture(await upload.read(), upload.filename or "document.pdf", "upload"))
+            staged.extend(pipeline.stage(data, name, "upload"))
         except ValueError as exc:
             errors.append(str(exc))
-    if not created and errors:
+
+    if not staged and errors:
         raise HTTPException(400, "; ".join(errors))
-    return {"captured": created, "errors": errors}
+
+    background.add_task(pipeline.process_many, [doc["id"] for doc in staged])
+    return {"captured": staged, "errors": errors, "reading": len(staged)}
 
 
 @app.post("/api/ingest/folder")
-def ingest_folder() -> dict:
+def ingest_folder(background: BackgroundTasks) -> dict:
     """Pick up anything dropped in data/dropbox.
 
     This stands in for the email and scanner channels: point a mail rule or a
     scanner's output at this folder and every new file enters the pipeline.
+    Like upload, it registers the documents and reads them afterwards.
     """
     DROP_DIR.mkdir(parents=True, exist_ok=True)
     seen = {Path(d["filename"]).name for d in store.all_documents()}
@@ -129,10 +194,12 @@ def ingest_folder() -> dict:
         if not path.is_file() or path.name in seen:
             continue
         try:
-            captured.extend(pipeline.capture_path(path, source="scan"))
+            captured.extend(pipeline.stage(path.read_bytes(), path.name, source="scan"))
         except ValueError as exc:
             errors.append(str(exc))
-    return {"captured": captured, "errors": errors}
+
+    background.add_task(pipeline.process_many, [doc["id"] for doc in captured])
+    return {"captured": captured, "errors": errors, "reading": len(captured)}
 
 
 @app.post("/api/documents/{doc_id}/reprocess")

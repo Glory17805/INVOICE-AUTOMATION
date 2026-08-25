@@ -115,20 +115,92 @@ function alertBox(kind, children) {
 // API
 // --------------------------------------------------------------------------- //
 
-async function api(path, options = {}) {
+/* The shared secret, if this deployment uses one. Like the API address it
+   arrives from /config.js, so the same built files run against an open local
+   backend and a protected one. */
+const API_KEY = window.GST_API_KEY || "";
+
+function authHeaders(extra) {
+  const headers = { ...(extra || {}) };
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
+  return headers;
+}
+
+async function request(path, options = {}) {
   let response;
   try {
-    response = await fetch(url(path), options);
+    response = await fetch(url(path), { ...options, headers: authHeaders(options.headers) });
   } catch (_) {
     // A separate backend can be down while this page is perfectly alive.
     throw new Error(`Cannot reach the backend at ${API}. Is it running?`);
+  }
+  if (response.status === 401) {
+    throw new Error(
+      API_KEY
+        ? "The backend rejected this frontend's API key. The two GST_API_KEY values do not match."
+        : "The backend requires an API key and this frontend has none. Start it with --api-key."
+    );
   }
   if (!response.ok) {
     let detail = response.statusText;
     try { detail = (await response.json()).detail || detail; } catch (_) { /* not JSON */ }
     throw new Error(detail);
   }
+  return response;
+}
+
+async function api(path, options = {}) {
+  const response = await request(path, options);
   return response.status === 204 ? null : response.json();
+}
+
+/* Fetching bytes for the browser to display or save.
+
+   An authentication header cannot ride on an <iframe src>, an <img src> or a
+   plain download link - the browser issues those itself and attaches nothing.
+   So the bytes are fetched here, with the header, and handed over as a blob.
+   The same path is used whether or not a key is configured, so the viewer
+   cannot work locally and then break the day authentication is turned on. */
+const objectUrls = new Set();
+
+function releaseObjectUrls() {
+  for (const objectUrl of objectUrls) URL.revokeObjectURL(objectUrl);
+  objectUrls.clear();
+}
+
+async function blobUrl(path) {
+  const response = await request(path);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  objectUrls.add(objectUrl);
+  return objectUrl;
+}
+
+/* Point a viewer at a document once its bytes have arrived. Rendering stays
+   synchronous; only the source is late. */
+function attachDocument(node, docId, fragment = "") {
+  blobUrl(`/api/documents/${docId}/file`)
+    .then((objectUrl) => { node.src = objectUrl + fragment; })
+    .catch((err) => { node.dataset.error = err.message; });
+}
+
+async function openDocument(doc) {
+  try {
+    window.open(await blobUrl(`/api/documents/${doc.id}/file`), "_blank", "noopener");
+  } catch (err) {
+    toast(`Could not open ${doc.filename}: ${err.message}`, "error");
+  }
+}
+
+async function saveWorkbook(period) {
+  try {
+    const objectUrl = await blobUrl(`/api/workbook/download?period=${encodeURIComponent(period)}`);
+    const link = el("a", { href: objectUrl, download: `Ira Innovations GST ${period}.xlsx` });
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 let toastTimer;
@@ -390,6 +462,10 @@ function renderReview() {
   const body = $("#review-body");
   body.textContent = "";
 
+  // The pane about to be replaced holds the only references to these; without
+  // this the blobs stay in memory for the life of the tab.
+  releaseObjectUrls();
+
   const pending = queue();
   const doc = pending.find((d) => d.id === state.reviewId) || pending[0];
   if (!doc) {
@@ -438,13 +514,15 @@ function renderReview() {
   const isImage = /\.(png|jpe?g|webp|gif)$/i.test(doc.filename);
   let viewer;
   if (isPdf) {
-    viewer = el("iframe", { className: "doc-frame", src: url(`/api/documents/${doc.id}/file#view=FitH`), title: doc.filename });
+    viewer = el("iframe", { className: "doc-frame", title: doc.filename });
+    attachDocument(viewer, doc.id, "#view=FitH");
   } else if (isImage) {
-    viewer = el("img", { className: "doc-frame", style: "object-fit:contain", src: url(`/api/documents/${doc.id}/file`), alt: doc.filename });
+    viewer = el("img", { className: "doc-frame", style: "object-fit:contain", alt: doc.filename });
+    attachDocument(viewer, doc.id);
   } else {
     viewer = el("div", { className: "doc-missing" }, [
       icon("info", 22), doc.filename,
-      el("a", { className: "btn sm", href: url(`/api/documents/${doc.id}/file`), target: "_blank", textContent: "Open file" }),
+      el("button", { className: "btn sm", textContent: "Open file", onclick: () => openDocument(doc) }),
     ]);
   }
 
@@ -457,9 +535,9 @@ function renderReview() {
       el("h2", { textContent: "The invoice" }),
       el("span", { className: "grow" }),
       // Some browsers refuse to render a PDF inside an iframe; the tab always works.
-      el("a", {
-        className: "btn sm ghost", href: url(`/api/documents/${doc.id}/file`),
-        target: "_blank", rel: "noopener", textContent: "Open in a tab",
+      el("button", {
+        className: "btn sm ghost", textContent: "Open in a tab",
+        onclick: () => openDocument(doc),
       }),
     ]),
     viewer,
@@ -691,16 +769,52 @@ async function upload(files) {
   if (!files.length) return;
   const form = new FormData();
   for (const file of files) form.append("files", file);
-  toast(`Reading ${files.length} file${files.length > 1 ? "s" : ""}…`);
+  toast(`Uploading ${files.length} file${files.length > 1 ? "s" : ""}…`);
   try {
     const result = await api("/api/documents", { method: "POST", body: form });
-    const n = result.captured.length;
     if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
-    else toast(`Captured ${n} invoice${n > 1 ? "s" : ""}.`, "good");
+
+    const n = result.captured.length;
+    if (n) toast(`${n} invoice${n > 1 ? "s" : ""} captured — reading…`);
+    await refresh();
+    await followReading(result.captured.map((doc) => doc.id));
   } catch (err) {
     toast(err.message, "error");
+    await refresh();
   }
+}
+
+/* The upload answers as soon as the documents exist; the backend reads them
+   afterwards. Watch them out of `new` so the inbox fills in as each invoice
+   lands, instead of showing a complete-looking but unread list. */
+async function followReading(ids) {
+  if (!ids.length) return;
+
+  const pending = new Set(ids);
+  // A generous ceiling: a large print run is one model call per invoice. It
+  // exists so a backend that dies mid-batch cannot leave this polling forever.
+  const deadline = Date.now() + 15 * 60 * 1000;
+
+  while (pending.size && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    try {
+      await loadDocuments();
+    } catch (_) {
+      continue;   // a blip on one poll should not abandon the batch
+    }
+
+    const byId = new Map(state.documents.map((doc) => [doc.id, doc]));
+    for (const id of [...pending]) {
+      const doc = byId.get(id);
+      if (!doc || doc.status !== "new") pending.delete(id);
+    }
+    if (state.screen === "inbox") renderInbox();
+  }
+
   await refresh();
+  const read = ids.length - pending.size;
+  if (pending.size) toast(`Read ${read} of ${ids.length}. The rest are still going.`, "warning");
+  else toast(`Read ${ids.length} invoice${ids.length > 1 ? "s" : ""}.`, "good");
 }
 
 // --------------------------------------------------------------------------- //
@@ -924,9 +1038,22 @@ function wire() {
     if (state.screen === "tax") renderTax();
   });
 
-  $("#btn-download").addEventListener("click", () => {
-    window.location.href = url(`/api/workbook/download?period=${encodeURIComponent(state.period)}`);
+  $("#btn-scan").addEventListener("click", async () => {
+    try {
+      const result = await api("/api/ingest/folder", { method: "POST" });
+      const n = result.captured.length;
+      if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
+      if (!n) { toast("Nothing new in the watch folder."); return; }
+      toast(`${n} invoice${n > 1 ? "s" : ""} picked up — reading…`);
+      await refresh();
+      await followReading(result.captured.map((doc) => doc.id));
+    } catch (err) {
+      toast(err.message, "error");
+      await refresh();
+    }
   });
+
+  $("#btn-download").addEventListener("click", () => saveWorkbook(state.period));
 
   $("#btn-reset").addEventListener("click", async () => {
     if (!confirm("Discard every posted row and start again from the master workbook?")) return;

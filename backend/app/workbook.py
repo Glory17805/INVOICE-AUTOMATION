@@ -197,10 +197,16 @@ def _reset_for_new_period(path: Path, period: str) -> None:
     _sync_tax_payable(wb)
     wb.save(path)
     wb.close()
+    _invalidate(period)
 
 
 def opening_credit_is_unset(period: str) -> bool:
     """True when this period's opening ITC has not been entered yet."""
+    return _cached(("opening_credit", period), period,
+                   lambda: _opening_credit_is_unset(period))
+
+
+def _opening_credit_is_unset(period: str) -> bool:
     with _LOCK:
         wb = _open(period)
         tp = wb[TAX_PAYABLE]
@@ -241,6 +247,7 @@ def reset_working_copy(period: str | None = None) -> None:
             path = workbook_path(item)
             if path.exists():
                 path.unlink()
+            _invalidate(item)
 
 
 # --------------------------------------------------------------------------- #
@@ -319,6 +326,50 @@ def _row_is_empty(ws, spec: SheetSpec, row: int) -> bool:
 # Reading registers
 # --------------------------------------------------------------------------- #
 
+# Every read re-opened the workbook and re-parsed it. Loading a register sheet
+# is tens of milliseconds of XML, and one visit to the Registers screen does it
+# four times over before the Tax position screen does it again - all against a
+# file that has not changed between them.
+#
+# The cache is keyed on the workbook's modification time, so it cannot serve a
+# stale answer: any write, by this process or by someone editing the file in
+# Excel, moves the timestamp and the next read recomputes. Writes also evict
+# their period explicitly, so correctness never depends on filesystem timestamp
+# resolution.
+#
+# Cached values are treated as immutable by every caller; they are serialised
+# to JSON, not mutated.
+_read_cache: dict[tuple, tuple[int, Any]] = {}
+
+
+def _stamp(period: str) -> int:
+    """The workbook's modification time, or -1 if it does not exist yet."""
+    try:
+        return workbook_path(period).stat().st_mtime_ns
+    except OSError:
+        return -1
+
+
+def _cached(key: tuple, period: str, compute: Callable[[], Any]) -> Any:
+    with _LOCK:
+        stamp = _stamp(period)
+        hit = _read_cache.get(key)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        value = compute()
+        # Re-stamp after computing: _open() creates the workbook on first use,
+        # so the timestamp that matters is the one it has now.
+        _read_cache[key] = (_stamp(period), value)
+        return value
+
+
+def _invalidate(period: str) -> None:
+    """Drop every cached read for one period, after writing to it."""
+    with _LOCK:
+        for key in [k for k in _read_cache if k[-1] == period]:
+            del _read_cache[key]
+
+
 def _tax_cell(ws, row: int, column: str, taxable: Decimal, rate: Decimal,
               _seen: frozenset[str] = frozenset()) -> Decimal:
     """Evaluate one tax cell, whether it holds a formula or a typed number.
@@ -390,6 +441,11 @@ def _display(value: Any) -> str | None:
 
 def read_register(doc_type: DocumentType, period: str) -> list[dict]:
     """Every posted row of one register, formatted for display."""
+    return _cached(("register", doc_type.value, period), period,
+                   lambda: _read_register(doc_type, period))
+
+
+def _read_register(doc_type: DocumentType, period: str) -> list[dict]:
     spec = SPECS[doc_type]
     with _LOCK:
         wb = _open(period)
@@ -421,6 +477,11 @@ def register_columns(doc_type: DocumentType) -> list[str]:
 
 def posted_keys(doc_type: DocumentType, period: str) -> list[tuple[str, str | None]]:
     """(invoice number, party GSTIN) already present in a register."""
+    return _cached(("posted_keys", doc_type.value, period), period,
+                   lambda: _posted_keys(doc_type, period))
+
+
+def _posted_keys(doc_type: DocumentType, period: str) -> list[tuple[str, str | None]]:
     spec = SPECS[doc_type]
     number_column = {"GSTR-1": "C", "GSTR-2B": "C", "Credit Note": "D", "RCM": "C"}[spec.name]
     gstin_column = {"GSTR-1": "D", "GSTR-2B": "D", "Credit Note": "B", "RCM": "D"}[spec.name]
@@ -707,6 +768,7 @@ def post_row(treatment: GstTreatment, meta: dict, period: str) -> tuple[str, int
         _sync_tax_payable(wb)
         _save(wb, period)
         wb.close()
+        _invalidate(period)
     return spec.name, row
 
 
@@ -722,6 +784,7 @@ def unpost_row(sheet: str, row: int, period: str) -> None:
         _sync_tax_payable(wb)
         _save(wb, period)
         wb.close()
+        _invalidate(period)
 
 
 # --------------------------------------------------------------------------- #
@@ -743,6 +806,11 @@ def _floats(values: dict[str, Decimal]) -> dict[str, float]:
 
 
 def tax_payable_summary(period: str) -> TaxPayableSummary:
+    """The Tax Payable position for one period, recomputed from its registers."""
+    return _cached(("tax_payable", period), period, lambda: _tax_payable_summary(period))
+
+
+def _tax_payable_summary(period: str) -> TaxPayableSummary:
     """Recompute the Tax Payable position from the registers.
 
     openpyxl reads formulas, not their cached results, so the figures here are
