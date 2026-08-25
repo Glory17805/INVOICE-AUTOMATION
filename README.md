@@ -44,15 +44,15 @@ from `--api`. Pointing it at a different backend is a restart, not a rebuild.
 
 ## Running it
 
-Two terminals — or `.un-all.ps1` to open both at once.
+Two terminals — or `run-all.ps1` to open both at once.
 
 ```powershell
 # Terminal 1 - backend
-cd d:\IRA\gst-automationackend
+cd d:\IRA\gst-automation\backend
 python -m uvicorn app.main:app --port 8000
 
 # Terminal 2 - frontend
-cd d:\IRA\gst-automationrontend
+cd d:\IRA\gst-automation\frontend
 python server.py --port 3000 --api http://127.0.0.1:8000
 ```
 
@@ -61,7 +61,7 @@ Open <http://127.0.0.1:3000>. API docs are at <http://127.0.0.1:8000/docs>.
 First time on a new machine:
 
 ```powershell
-cd d:\IRA\gst-automationackend
+cd d:\IRA\gst-automation\backend
 python -m pip install -r requirements.txt
 copy .env.example .env        # then paste your ANTHROPIC_API_KEY into it
 ```
@@ -70,7 +70,39 @@ The frontend needs no packages at all.
 
 Without an API key the backend still runs, but falls back to an offline reader that
 parses the PDF text layer only — it cannot read scans. That is a safety net, not the
-intended path.
+intended path. If Claude is configured but cannot be reached — an expired key, an
+exhausted balance, no network — the same fallback takes over and the header says
+**Claude unavailable** with the reason, because "every invoice was read offline" must
+never be a silent condition.
+
+### Only one backend at a time
+
+The backend takes an exclusive lock on its `data/` directory at startup, and a second
+one pointed at the same directory refuses to start. This is not a nicety: posting a row
+is read-the-register, pick-the-next-free-line, write, save, and two processes
+interleaving those steps would lose a row with no error raised anywhere. For the same
+reason, do not run it with `--workers 2`.
+
+### Access
+
+By default the API is **open** — anything that can reach the port can download the
+workbook and read every stored invoice. That is the right default while both halves run
+on one machine, and the wrong one the moment it is reachable from anywhere else. Set a
+key before that happens:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # generate one
+# put it in backend/.env as GST_API_KEY=...
+```
+
+The backend then requires it on every route but `/api/health`, as an `X-API-Key` header
+or a bearer token, checked in constant time. `frontend/run.ps1` reads the same value out
+of `backend/.env`, so there is one place to set it. Startup states which mode is in
+force.
+
+This draws a boundary around the **network**, not around a person: one key for the whole
+deployment, and anyone who can load the frontend can read it out of `/config.js`.
+Per-user accounts are listed under future work.
 
 ### Running them apart
 
@@ -78,13 +110,14 @@ They are only coupled by a URL and an allowed origin, so either can move:
 
 ```powershell
 # Backend on another port
-python -m uvicorn app.main:app --port 9000
+python -m uvicorn app.main:app --port 9000 --workers 1
 python server.py --api http://127.0.0.1:9000        # point the frontend at it
 
 # Backend reachable from other machines
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-# then in backend/.env, allow the origin the browser will use:
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+# then in backend/.env, allow the origin the browser will use, and set a key:
 #   GST_FRONTEND_ORIGINS=http://192.168.1.50:3000
+#   GST_API_KEY=...
 ```
 
 If the backend is down, the frontend still serves the page and says so plainly rather
@@ -93,8 +126,9 @@ than failing silently.
 ### Tests
 
 ```powershell
-cd d:\IRA\gst-automationackend
-python -m pytest tests -q      # 104 tests
+cd d:\IRA\gst-automation\backend
+python -m pip install -r requirements-dev.txt
+python -m pytest tests -q      # 135 tests
 ```
 
 The suite runs against a scratch copy of the real May-26 workbook, and every expected
@@ -120,6 +154,7 @@ the system reproduces the client's own numbers.
 | Stage | Where |
 |---|---|
 | 1. Capture | `app/pipeline.py` — upload, or the `data/dropbox` watch folder |
+| 1a. Read | Deferred: capture returns once the documents exist, then a background task reads them |
 | 2. Classify | `app/gst/rules.py` — sale / purchase / credit note / reverse charge |
 | 3. Extract | `app/extract/llm.py` (Claude), `app/extract/heuristic.py` (offline fallback) |
 | 4. Apply GST rules | `app/gst/rules.py` — intra- vs inter-state, then recompute the tax |
@@ -153,7 +188,9 @@ Only things a reviewer can actually act on. Two deliberate exclusions:
   GSTR-1 sheet has a B2B/B2C split precisely because both are normal. It is reported as
   context on the treatment (`supply_category`), not raised for resolution.
 - **Which reader is running is not a document defect.** It is system state, stated once
-  on the header banner rather than repeated on every document it touches.
+  on the header banner rather than repeated on every document it touches. The banner
+  reports the reader that *actually ran*, not the one configured — holding a key is not
+  the same as Claude having answered.
 
 ### The return period is derived, never configured
 
@@ -220,17 +257,24 @@ printed; `app/gst/rules.py` owns every judgment call, deterministically and unde
 
 ## Safety properties
 
-- **The source workbook is never written to.** On first run it is copied to
-  `data/workbook/gst-workbook.xlsx` and only that copy is appended to. *Download workbook*
-  gives you the copy; *Reset* re-seeds it from the master.
+- **The source workbook is never written to.** Each period is copied out of the master to
+  `data/workbook/gst-<period>.xlsx` on first use, and only that copy is appended to.
+  *Download workbook* gives you the copy; *Reset* re-seeds it from the master.
+- **Only one process may write them.** Enforced by an OS-level lock, not by convention —
+  see *Only one backend at a time*.
 - **Registers can grow.** GSTR-1 ships with 64 pre-formatted rows and those are filled
   first, reusing the sheet's formatting. When a register runs out, a row is inserted above
   the totals row, the `SUM()` ranges are rewritten, and — because openpyxl does not adjust
   formulas across an insert — every Tax Payable reference into that sheet is repointed.
   Tested in `test_gstr1_grows_past_its_last_template_row`.
 - **Every original is archived** next to the row it produced, under
-  `data/archive/<sheet>/row<NNNN>__<filename>`.
+  `data/archive/<period>/<sheet>/row<NNNN>__<filename>`.
 - **Duplicates are caught** by reading the register back, not by trusting the queue.
+- **Register reads are cached against the workbook's modification time**, so a screen
+  never re-parses an unchanged file — and a row you type into the workbook in Excel while
+  the app is running still shows up, because the timestamp moves.
+- **The queue is SQLite** (`data/store.db`), not a file rewritten on every change. An
+  existing `store.json` is imported on first run and renamed, never deleted.
 
 ---
 
@@ -271,10 +315,14 @@ the state name shown to a reviewer is now the correct one.
 
 ## API
 
+Every route except `/api/health` requires the `X-API-Key` header once `GST_API_KEY` is
+set; with it unset the API is open.
+
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/info` | Company, return period, reader, counts |
-| `GET` `POST` | `/api/documents` | List / upload |
+| `GET` | `/api/health` | Liveness. Never requires a key |
+| `GET` | `/api/info` | Company, periods, reader (configured *and* effective), counts |
+| `GET` `POST` | `/api/documents` | List / upload. Upload returns before reading; poll for status |
 | `POST` | `/api/ingest/folder` | Pick up the watch folder |
 | `GET` | `/api/documents/{id}/file` | The original, for the review pane |
 | `PATCH` | `/api/documents/{id}` | Apply corrections, re-run rules |
