@@ -201,10 +201,21 @@ def _read_document(path: Path) -> tuple[ExtractedInvoice, str, str | None]:
         return heuristic.extract(path), "heuristic", f"Reader failed: {exc}"
 
 
+def _provider_key_name() -> str:
+    """The env var the ACTIVE provider needs. Naming the wrong one sends
+    someone to a key that will not help them."""
+    return "GEMINI_API_KEY" if extraction_provider() == "gemini" else "ANTHROPIC_API_KEY"
+
+
+def _provider_label() -> str:
+    return "a Gemini API key" if extraction_provider() == "gemini" else "a Claude API key"
+
+
 def _no_credentials_note(provider: str) -> str:
     if provider == "gemini":
         return "No GEMINI_API_KEY configured - add it to backend/.env for a full read."
-    return "No Claude credentials configured - add ANTHROPIC_API_KEY to backend/.env for a full read."
+    return ("No Claude credentials configured - add ANTHROPIC_API_KEY to backend/.env "
+            "for a full read.")
 
 
 def evaluate(doc: ExtractedInvoice, *, exclude_key: tuple[str, str | None] | None = None) -> tuple[GstTreatment, ValidationResult]:
@@ -318,9 +329,9 @@ def process(doc_id: str) -> dict:
         result = ValidationResult()
         result.add(
             "no_text_layer",
-            f"{record['filename']} has no text layer - it is a scan or a photo, so the offline "
-            f"reader has nothing to parse. Reading it needs a Claude API key: add "
-            f"ANTHROPIC_API_KEY to .env, then press Read again.",
+            f"{record['filename']} has no text layer - it is a scan or a photo, so the "
+            f"offline reader has nothing to parse. Reading it needs {_provider_label()}: "
+            f"add {_provider_key_name()} to backend/.env, then press Read again.",
         )
 
     status = _status_for(result)

@@ -380,7 +380,11 @@ def test_a_scan_with_no_text_layer_is_flagged_on_that_document(tmp_path, monkeyp
     assert record["status"] == "needs_review"
     message = next(i["message"] for i in record["issues"] if i["code"] == "no_text_layer")
     assert "scanned-bill.png" in message
-    assert "ANTHROPIC_API_KEY" in message
+    # The message must name the key the ACTIVE provider needs. Hard-coding
+    # ANTHROPIC_API_KEY here is what let it go stale when Gemini arrived.
+    from app.config import extraction_provider
+    expected = "GEMINI_API_KEY" if extraction_provider() == "gemini" else "ANTHROPIC_API_KEY"
+    assert expected in message
 
 
 def test_a_readable_pdf_is_not_flagged_for_a_missing_text_layer(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@ Set-Location $PSScriptRoot
 
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
-    Write-Host "Created backend/.env - add your ANTHROPIC_API_KEY to enable the Claude reader." -ForegroundColor Yellow
+    Write-Host "Created backend/.env - add GEMINI_API_KEY (or ANTHROPIC_API_KEY) to enable the LLM reader." -ForegroundColor Yellow
 }
 
 python -m pip install -q -r requirements.txt

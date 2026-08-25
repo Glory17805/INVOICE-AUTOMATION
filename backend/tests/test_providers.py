@@ -228,3 +228,15 @@ def test_the_suite_cannot_reach_a_provider_by_accident():
     """conftest forces the offline reader. If this fails, the suite is making
     real API calls - slow, quota-burning, and dependent on a network."""
     assert pipeline.has_credentials() is False
+
+
+def test_the_scan_message_names_the_active_providers_key(monkeypatch):
+    """A message that names the wrong key sends someone to a credential that
+    cannot help them. This went stale the moment a second provider existed."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    assert pipeline._provider_key_name() == "GEMINI_API_KEY"
+    assert "Gemini" in pipeline._provider_label()
+
+    monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "claude")
+    assert pipeline._provider_key_name() == "ANTHROPIC_API_KEY"
+    assert "Claude" in pipeline._provider_label()
