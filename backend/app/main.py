@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import accounts, appsettings, auth, pipeline, singleton, store, workbook
+from . import accounts, appsettings, auth, pipeline, runtime, singleton, store, workbook
 from . import period as periods
 from .auth import require_admin, require_user
 from .config import (
@@ -311,11 +311,17 @@ def info(user: dict = Depends(require_user)) -> dict:
     queued = {d["period"] for d in documents if d.get("period")}
     known = sorted(set(workbook.available_periods()) | queued, key=periods.sort_key, reverse=True)
 
-    # Holding a credential is not the same as Claude having answered. An
+    # Holding a credential is not the same as the model having answered. An
     # expired key, an empty balance or an unreachable network all fall back to
     # the offline reader, and reporting the *configured* reader would tell
-    # someone their invoices were read by Claude when none of them were.
-    last_read = next((d for d in documents if d.get("reader")), None)
+    # someone their invoices were read by a model that never saw them.
+    #
+    # Read from the runtime record rather than off the newest document: a note
+    # on a document describes the moment it was read, which may be days ago and
+    # under a different key. Quoting it in the present tense produced a screen
+    # that said "your invoices may go to Gemini" and "no Gemini key configured"
+    # at the same time. This returns nothing once the configuration has moved on.
+    last_read = runtime.last_read(extraction_provider(), has_credentials())
 
     return {
         **workbook.workbook_info(),
@@ -324,7 +330,8 @@ def info(user: dict = Depends(require_user)) -> dict:
         "provider_tier": gemini_tier() if extraction_provider() == "gemini" else None,
         "training_risk": training_risk(),
         "reader_effective": last_read.get("reader") if last_read else None,
-        "reader_note": last_read.get("reader_note") if last_read else None,
+        "reader_note": last_read.get("note") if last_read else None,
+        "last_read_at": last_read.get("at") if last_read else None,
         "model": extraction_model() if has_credentials() else None,
         "credential_source": credential_source(),
         "approval_mode": approval_mode(),

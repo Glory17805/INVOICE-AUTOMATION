@@ -296,13 +296,13 @@ async function loadInfo() {
        GSTINs and amounts belonging to a real company - so it is stated on every
        screen, and it clears when the underlying fact changes rather than when
        somebody clicks it away. */
+    // The sentence from the backend already carries the instruction. Repeating
+    // it underneath only made the warning longer, and a longer warning is an
+    // easier one to skip.
     if (state.info.training_risk) {
       banner.append(alertBox("warning", [
         el("strong", { textContent: "Invoice data may be used to train the reader's model. " }),
         state.info.training_risk,
-        el("div", { className: "banner-note" },
-          "Set GST_GEMINI_TIER=paid in backend/.env once billing is enabled on the key, "
-          + "or switch to Claude, before putting real client invoices through this."),
       ]));
     }
 

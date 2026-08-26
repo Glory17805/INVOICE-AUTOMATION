@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 
 from fastapi import Depends
 
-from app import accounts, appsettings, auth, db, pipeline, singleton, store, workbook
+from app import (
+    accounts, appsettings, auth, db, pipeline, runtime, singleton, store, workbook,
+)
 from app.config import IRA_INNOVATIONS
 from app.models import DocStatus, DocumentType
 
@@ -603,6 +605,51 @@ def isolated_store(tmp_path, monkeypatch):
     yield tmp_path
     db.forget()
     store._prepared.clear()
+
+
+# --------------------------------------------------------------------------- #
+# What the reader last did, and when to stop saying it
+# --------------------------------------------------------------------------- #
+
+def test_the_last_read_is_reported_back(isolated_store):
+    runtime.record_read("gemini", True, "gemini", None)
+    seen = runtime.last_read("gemini", True)
+    assert seen["reader"] == "gemini"
+    assert seen["at"]
+
+
+def test_nothing_is_reported_before_anything_has_been_read(isolated_store):
+    assert runtime.last_read("gemini", True) is None
+
+
+def test_adding_a_key_retires_the_note_that_said_there_was_none(isolated_store):
+    """The bug this exists for: a screen saying "your invoices may go to Gemini"
+    and "no Gemini key is configured" at the same time. The second sentence was
+    a true statement about a read that happened before the key was added."""
+    runtime.record_read("gemini", False, "heuristic", "No GEMINI_API_KEY configured")
+
+    # Same provider, but credentials now present: the note is about the past.
+    assert runtime.last_read("gemini", True) is None
+    # Unchanged configuration still reports it.
+    assert runtime.last_read("gemini", False)["note"] == "No GEMINI_API_KEY configured"
+
+
+def test_switching_provider_retires_the_note(isolated_store):
+    runtime.record_read("claude", True, "heuristic", "credit balance is too low")
+    assert runtime.last_read("gemini", True) is None
+    assert runtime.last_read("claude", True)["reader"] == "heuristic"
+
+
+def test_removing_a_key_retires_the_note_too(isolated_store):
+    runtime.record_read("gemini", True, "gemini", None)
+    assert runtime.last_read("gemini", False) is None
+
+
+def test_recording_a_read_never_raises(isolated_store, monkeypatch):
+    """Reporting what the reader did must not be able to break the reading."""
+    monkeypatch.setattr(db, "connect", lambda: (_ for _ in ()).throw(RuntimeError("disk gone")))
+    runtime.record_read("gemini", True, "gemini", None)      # must not raise
+    assert runtime.last_read("gemini", True) is None         # nor must reading it
 
 
 def test_signup_mode_defaults_to_needing_approval(isolated_store):

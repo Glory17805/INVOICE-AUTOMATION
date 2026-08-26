@@ -14,7 +14,7 @@ import shutil
 from datetime import date, datetime
 from pathlib import Path
 
-from . import store, workbook
+from . import runtime, store, workbook
 from . import period as periods
 from .config import (
     ARCHIVE_DIR, INCOMING_DIR, IRA_INNOVATIONS, approval_mode, ensure_dirs,
@@ -314,6 +314,12 @@ def process(doc_id: str) -> dict:
     store.update(doc_id, {"stage": Stage.READING})
 
     extracted, reader, reader_note = _read_document(path)
+
+    # Record what happened together with the configuration it happened under,
+    # so the header can report the reader that is really running without
+    # quoting a note from before the last key change.
+    runtime.record_read(extraction_provider(), has_credentials(), reader, reader_note)
+
     store.update(doc_id, {"stage": Stage.EXTRACTED})
 
     treatment, result = evaluate(extracted)

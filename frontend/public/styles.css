@@ -426,7 +426,19 @@ tfoot td {
   .brand { border-bottom: none; border-right: 1px solid var(--line); white-space: nowrap; padding: 0.7rem 0.9rem; }
   .nav { flex-direction: row; padding: 0.4rem; }
   .nav button .label { white-space: nowrap; }
-  .sidebar-foot { display: none; }
+
+  /* The sidebar footer holds the account and Sign out. It was hidden here when
+     it carried nothing but a status dot; hiding it now leaves no way to sign
+     out on a narrow window. Keep it, laid out along the bar instead. */
+  .sidebar-foot {
+    display: flex; align-items: center; gap: 0.5rem;
+    border-top: none; border-left: 1px solid var(--line);
+    margin-left: auto; padding: 0.4rem 0.7rem; white-space: nowrap;
+  }
+  .sidebar-foot .row { display: none; }          /* reader status: shown in Settings */
+  .sidebar-foot .who { margin: 0; padding: 0.2rem 0.4rem; }
+  .sidebar-foot .who-text { display: none; }     /* avatar alone at this width */
+  .sidebar-foot .btn.block { width: auto; }
   .page, .context { padding-left: 1rem; padding-right: 1rem; }
   .row { display: flex; flex-wrap: wrap; gap: 0.5rem 0.7rem; }
   .row .who { flex: 1 1 100%; order: 1; }
