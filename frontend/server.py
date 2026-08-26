@@ -21,7 +21,7 @@ import argparse
 import json
 import os
 from functools import partial
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
@@ -87,7 +87,16 @@ def main() -> None:
         raise SystemExit(f"Frontend files not found at {PUBLIC_DIR}")
 
     handler = partial(FrontendHandler, api_url=args.api.rstrip("/"))
-    server = HTTPServer((args.host, args.port), handler)
+
+    # Threading, not the plain HTTPServer, and this is not an optimisation.
+    #
+    # HTTPServer handles one connection at a time. Browsers routinely open
+    # speculative connections they never send a request on, and one of those is
+    # enough to park the accept loop forever: the page loads its HTML, then
+    # waits on a script that never arrives. It looks exactly like a broken app
+    # rather than a stuck server, which is how it cost an afternoon.
+    server = ThreadingHTTPServer((args.host, args.port), handler)
+    server.daemon_threads = True   # a stuck connection must not block shutdown
 
     print(f"Frontend  http://{args.host}:{args.port}")
     print(f"Backend   {args.api}")

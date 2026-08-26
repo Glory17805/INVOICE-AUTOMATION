@@ -8,6 +8,18 @@
 </head>
 <body>
 
+<!-- Visible until the script takes over. If app.js never arrives - a stalled
+     dev server, a bad deploy - this is what stays on screen, which says
+     "not finished" rather than showing an empty sign-in card that reads as a
+     broken application. -->
+<div class="boot" id="boot">
+  <div class="boot-card">
+    <div class="boot-title">Invoice Automation</div>
+    <p class="boot-msg">Loading…</p>
+    <noscript><p class="boot-msg">This application needs JavaScript enabled.</p></noscript>
+  </div>
+</div>
+
 <!-- ===================================================================== -->
 <!-- Signed out. A single view that switches between sign in, first-run    -->
 <!-- setup, forgotten password and reset, so there is one card on screen   -->

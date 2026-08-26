@@ -1260,6 +1260,7 @@ function gateAlert(message, kind = "error") {
 }
 
 function renderGate() {
+  $("#boot").hidden = true;
   $("#shell").hidden = true;
   $("#gate").hidden = false;
 
@@ -2352,6 +2353,7 @@ function paintIdentity() {
 }
 
 async function enterApp() {
+  $("#boot").hidden = true;
   $("#gate").hidden = true;
   $("#shell").hidden = false;
   paintIdentity();
@@ -2365,7 +2367,29 @@ function resetTokenFromHash() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/* Anything that escapes start() would otherwise leave the loading card on
+   screen for ever, with the real reason sitting only in the console. */
+function bootFailed(err) {
+  const boot = $("#boot");
+  if (!boot) return;
+  boot.hidden = false;
+  const message = boot.querySelector(".boot-msg");
+  if (message) {
+    message.textContent = `Could not start: ${err && err.message ? err.message : err}`;
+    message.style.color = "var(--critical)";
+  }
+}
+
 (async function start() {
+  try {
+    await boot();
+  } catch (err) {
+    bootFailed(err);
+    throw err;
+  }
+})();
+
+async function boot() {
   wire();
 
   // A reset link is a way in, so it is checked before any session is.
@@ -2409,4 +2433,4 @@ function resetTokenFromHash() {
     renderGate();
     if (!(err instanceof Unauthenticated)) gateAlert(err.message);
   }
-})();
+}

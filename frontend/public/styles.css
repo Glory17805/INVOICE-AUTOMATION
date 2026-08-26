@@ -443,6 +443,29 @@ tfoot td {
    and setting a new one - because they are the same moment in the product.
    ========================================================================= */
 
+/* The hidden attribute has to win.
+   Every layout rule below sets `display`, and an author `display` beats the
+   browser's own `[hidden] { display: none }`. Without this, `hidden` does
+   nothing to .gate or .shell - so a page whose script has not run yet shows an
+   empty sign-in card instead of showing nothing, which reads as a broken app
+   rather than one that is still loading. */
+[hidden] { display: none !important; }
+
+/* The pre-script state. Same ground and card as the gate, so the page does not
+   jump when the script replaces it. */
+.boot {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  padding: 1.5rem; background: var(--bg);
+}
+.boot-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); padding: 1.6rem 1.8rem; text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+.boot-title { font-weight: 650; font-size: 1rem; letter-spacing: -0.01em; }
+.boot-msg { margin: 0.5rem 0 0; font-size: 0.84rem; color: var(--ink-3); }
+
 .gate {
   position: fixed; inset: 0; z-index: 50;
   display: grid; place-items: center;
