@@ -1,44 +1,39 @@
-/* GST Invoice Automation - application UI.
- *
- * Deliberately not the proposal document's letterhead styling: this is a tool
- * someone works in every day, so it uses one sans face, plain sentence-case
- * labels, and obvious controls rather than serif headings and mono captions.
- *
- * Status colours are the reserved status palette and always ship with an icon
- * and a word, never colour alone.
- */
-
 :root {
   color-scheme: light;
 
-  --bg: #f5f6f8;
+  /* Brighter, cleaner light palette. The accent moved from a muted navy to a
+     vivid blue: it still clears 4.5:1 on the surface for text, so it can carry
+     links and labels rather than only filling buttons. */
+  --bg: #f4f7fc;
   --surface: #ffffff;
-  --surface-2: #fafbfc;
-  --surface-3: #eef1f5;
-  --line: #e2e6ec;
-  --line-strong: #cdd4dd;
+  --surface-2: #f9fbfe;
+  --surface-3: #eaf1fb;
+  --line: #dde6f2;
+  --line-strong: #c2d0e4;
 
-  --ink: #16202b;
-  --ink-2: #4a5765;
-  --ink-3: #78848f;
+  --ink: #101828;
+  --ink-2: #475467;
+  --ink-3: #737f94;
 
-  --accent: #1f4e79;
-  --accent-hover: #163a5b;
-  --accent-soft: #e8f0f7;
-  --accent-ink: #123252;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #e8f0fe;
+  --accent-ink: #1e40af;
 
+  /* Reserved status palette - never reused as a series colour, and always
+     paired with an icon and a word so meaning never rests on hue alone. */
   --good: #0ca30c;
-  --good-soft: #e6f5e6;
+  --good-soft: #e4f7e4;
   --warning: #fab219;
-  --warning-soft: #fdf3de;
+  --warning-soft: #fff5e0;
   --serious: #ec835a;
-  --serious-soft: #fceee7;
+  --serious-soft: #fdefe8;
   --critical: #d03b3b;
-  --critical-soft: #fbeaea;
+  --critical-soft: #fdeaea;
 
-  --shadow-sm: 0 1px 2px rgba(16, 32, 48, 0.06);
-  --shadow: 0 2px 8px rgba(16, 32, 48, 0.08);
-  --shadow-lg: 0 8px 28px rgba(16, 32, 48, 0.14);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow: 0 2px 10px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 10px 32px rgba(16, 24, 40, 0.16);
 
   --radius: 8px;
   --radius-sm: 5px;
@@ -47,30 +42,78 @@
   --sidebar: 232px;
 }
 
+/* Three theme states, in this order on purpose:
+   - :root above is light, and is the fallback when nothing else matches.
+   - The media block follows the operating system, but only while the user has
+     not chosen for themselves ("light" opts out of it).
+   - The attribute block is an explicit choice and comes last, so it wins in
+     both directions. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --bg: #12171d;
-    --surface: #1a2028;
-    --surface-2: #1e252e;
-    --surface-3: #252d38;
-    --line: #2c3540;
-    --line-strong: #3d4854;
-    --ink: #e8edf3;
-    --ink-2: #aab6c3;
-    --ink-3: #7d8996;
-    --accent: #5b9bd5;
-    --accent-hover: #7cb2e3;
-    --accent-soft: #1c2b3a;
-    --accent-ink: #9cc4e8;
-    --good-soft: #16291a;
-    --warning-soft: #2e2413;
-    --serious-soft: #2e2019;
-    --critical-soft: #2e1a1a;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.6);
+  :root:not([data-theme="light"]) {
+  color-scheme: dark;
+
+  --bg: #0d1220;
+  --surface: #161d2e;
+  --surface-2: #1b2436;
+  --surface-3: #232e44;
+  --line: #2a3549;
+  --line-strong: #3c4a63;
+
+  --ink: #eef2f9;
+  --ink-2: #b3bfd2;
+  --ink-3: #8593aa;
+
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
+  --accent-soft: #1c2b47;
+  --accent-ink: #bfdbfe;
+
+  --good: #34d058;
+  --good-soft: #14301d;
+  --warning: #fbbf24;
+  --warning-soft: #33280f;
+  --serious: #fb923c;
+  --serious-soft: #33220f;
+  --critical: #f87171;
+  --critical-soft: #331919;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.65);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0d1220;
+  --surface: #161d2e;
+  --surface-2: #1b2436;
+  --surface-3: #232e44;
+  --line: #2a3549;
+  --line-strong: #3c4a63;
+
+  --ink: #eef2f9;
+  --ink-2: #b3bfd2;
+  --ink-3: #8593aa;
+
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
+  --accent-soft: #1c2b47;
+  --accent-ink: #bfdbfe;
+
+  --good: #34d058;
+  --good-soft: #14301d;
+  --warning: #fbbf24;
+  --warning-soft: #33280f;
+  --serious: #fb923c;
+  --serious-soft: #33220f;
+  --critical: #f87171;
+  --critical-soft: #331919;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.65);
 }
 
 * { box-sizing: border-box; }
@@ -727,3 +770,56 @@ table.grid.log code {
   table.grid th:nth-child(3), table.grid td:nth-child(3),
   table.grid th:nth-child(4), table.grid td:nth-child(4) { display: none; }
 }
+
+
+/* ===== Theme switch ======================================================= */
+
+.segmented {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface-3); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 2px;
+}
+.segmented button {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-2); font-size: 0.78rem; font-weight: 500;
+  padding: 0.22rem 0.5rem; border-radius: 4px; white-space: nowrap;
+}
+.segmented button:hover { color: var(--ink); background: var(--surface); }
+.segmented button[aria-pressed="true"] {
+  background: var(--surface); color: var(--accent-ink);
+  font-weight: 650; box-shadow: var(--shadow-sm);
+}
+.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 620px) { .segmented .seg-label { display: none; } }
+
+/* ===== Profile card ======================================================= */
+
+.profile-card {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 1rem 1.15rem;
+  box-shadow: var(--shadow-sm); margin-bottom: 1rem;
+}
+.profile-card .avatar-lg {
+  width: 46px; height: 46px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  font-weight: 700; font-size: 1.05rem; letter-spacing: 0.01em;
+}
+.profile-card .who-block { min-width: 0; flex: 1 1 12rem; }
+.profile-card .who-block .nm { font-size: 1rem; font-weight: 650; }
+.profile-card .who-block .em {
+  font-size: 0.82rem; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.profile-card .facts { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+.profile-card .facts .f .k { font-size: 0.72rem; color: var(--ink-3); }
+.profile-card .facts .f .v { font-size: 0.86rem; font-weight: 600; }
+.profile-card .acts { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.role-chip {
+  display: inline-block; border-radius: 99px; padding: 0.1rem 0.5rem;
+  font-size: 0.72rem; font-weight: 650;
+  background: var(--accent-soft); color: var(--accent-ink);
+}
+.role-chip.admin { background: var(--warning-soft); color: var(--warning); }

@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GST Invoice Automation</title>
   <link rel="stylesheet" href="/styles.css">
+  <script>
+    // Applied before the stylesheet paints, so a chosen theme never flashes
+    // the other one on load. Storage can throw (private windows, blocked
+    // cookies), and the page must still render if it does.
+    try {
+      var saved = localStorage.getItem("gst.theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    } catch (e) { /* fall through to the system preference */ }
+  </script>
 </head>
 <body>
 
@@ -155,6 +166,7 @@
         </svg>
         Download workbook
       </button>
+      <div class="segmented" id="theme-switch" role="group" aria-label="Colour theme"></div>
       <button class="btn ghost" id="btn-reset" title="Discard posted rows and start this period again">Reset</button>
     </div>
 

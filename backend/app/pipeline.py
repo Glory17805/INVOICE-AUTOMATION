@@ -10,6 +10,7 @@ has to stop at Quick Review.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from datetime import date, datetime
 from pathlib import Path
@@ -33,6 +34,19 @@ from .gst.validate import ValidationResult, check_duplicate, reconcile_tax, vali
 from .models import DocStatus, DocumentType, ExtractedInvoice, GstTreatment
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".txt", ".csv"}
+
+
+class DuplicateUpload(ValueError):
+    """This exact file is already in the queue.
+
+    Separate from the other ValueErrors stage() raises, because it is not a bad
+    file - it is a file the system already has, and the caller may legitimately
+    want to insist.
+    """
+
+    def __init__(self, message: str, existing: list[dict]):
+        super().__init__(message)
+        self.existing = existing
 
 
 class Stage:
@@ -66,7 +80,17 @@ class Stage:
 # Stage 1: capture
 # --------------------------------------------------------------------------- #
 
-def stage(data: bytes, filename: str, source: str = "upload") -> list[dict]:
+def _already_held(digest: str) -> list[dict]:
+    """Documents in the queue that came from these exact bytes.
+
+    Posted documents count. Re-uploading something already written to the
+    workbook is the mistake most worth catching, not the one to wave through.
+    """
+    return [d for d in store.all_documents() if d.get("source_hash") == digest]
+
+
+def stage(data: bytes, filename: str, source: str = "upload",
+          allow_duplicate: bool = False) -> list[dict]:
     """Store an arriving file and register every invoice in it, without reading.
 
     One file is not necessarily one invoice: billing software exports a month's
@@ -85,6 +109,21 @@ def stage(data: bytes, filename: str, source: str = "upload") -> list[dict]:
         raise ValueError(
             f"{safe_name}: unsupported file type. Accepted: {', '.join(sorted(SUPPORTED_SUFFIXES))}"
         )
+
+    # Checked before anything is stored or read: an accidental second upload of
+    # the same batch should cost nothing, not a model call per invoice in it.
+    digest = hashlib.sha256(data).hexdigest()
+    if not allow_duplicate:
+        existing = _already_held(digest)
+        if existing:
+            when = (existing[0].get("received_at") or "")[:16].replace("T", " ")
+            raise DuplicateUpload(
+                f"{safe_name}: already uploaded"
+                + (f" on {when}" if when else "")
+                + f" ({len(existing)} document{'s' if len(existing) > 1 else ''} from it are "
+                  f"already in the queue). Upload it again only if you mean to.",
+                existing,
+            )
 
     staged = INCOMING_DIR / f"staged__{store.new_id()}__{safe_name}"
     staged.write_bytes(data)
@@ -106,6 +145,9 @@ def stage(data: bytes, filename: str, source: str = "upload") -> list[dict]:
             "source": source,
             "status": DocStatus.NEW.value,
             "stage": Stage.UPLOADED,
+            # The file this came from, so an identical re-upload is recognised
+            # before it costs anything.
+            "source_hash": digest,
         })]
 
     stem = Path(safe_name).stem
@@ -340,6 +382,22 @@ def process(doc_id: str) -> dict:
             f"add {_provider_key_name()} to backend/.env, then press Read again.",
         )
 
+    # The same invoice can arrive as a different file - emailed, then scanned,
+    # then re-exported - so the hash check at the door cannot see it. This one
+    # looks at what the document turned out to be.
+    #
+    # A warning, not a blocker: the register check at post time is what protects
+    # the workbook, and two queue entries are not yet a filing error. But
+    # someone working through the queue should not have to notice on their own.
+    twin = _queue_twin(doc_id, extracted, treatment)
+    if twin:
+        result.add(
+            "duplicate_in_queue",
+            f"Invoice {extracted.invoice_number} is already in the queue "
+            f"({twin.get('filename')}). Posting both would be rejected as a duplicate.",
+            severity="warning",
+        )
+
     status = _status_for(result)
 
     return store.update(doc_id, {
@@ -354,6 +412,27 @@ def process(doc_id: str) -> dict:
         "failure_reason": _failure_reason(result, reader, record["filename"]),
         "error": None,
     }, event=f"read_by_{reader}")
+
+
+def _queue_twin(doc_id: str, doc: ExtractedInvoice, treatment: GstTreatment) -> dict | None:
+    """Another document in the queue claiming to be the same invoice."""
+    number = (doc.invoice_number or "").strip().casefold()
+    if not number:
+        return None
+    party = (treatment.counterparty_gstin or "").strip().upper()
+
+    for other in store.all_documents():
+        if other["id"] == doc_id:
+            continue
+        extracted = other.get("extracted") or {}
+        if (extracted.get("invoice_number") or "").strip().casefold() != number:
+            continue
+        # An invoice number is only unique per party, so a bare number match
+        # from a different supplier is a coincidence, not a duplicate.
+        seen_party = ((other.get("treatment") or {}).get("counterparty_gstin") or "").strip().upper()
+        if not party or not seen_party or seen_party == party:
+            return other
+    return None
 
 
 def _failure_reason(result: ValidationResult, reader: str, filename: str) -> str | None:

@@ -22,6 +22,7 @@ const state = {
   selected: new Set(),
   editing: false,
   busy: false,
+  theme: "system",
 
   // The batch the Processing screen is watching, and the History screen's
   // current search - both survive navigating away and back.
@@ -694,7 +695,7 @@ function renderReview() {
      register takes one row per invoice, so the lines are here to check the
      total against, not to be edited into it. Editing them would imply they
      drive something they do not. */
-  const lines = (extracted.line_items || []).filter((line) => line && (
+  const lines = (e.line_items || []).filter((line) => line && (
     line.description || line.taxable_value != null || line.quantity != null));
 
   if (lines.length) {
@@ -716,7 +717,7 @@ function renderReview() {
     // Worth showing: if the lines do not add up to the invoice's own taxable
     // value, that is exactly the sort of misread a reviewer is here to catch.
     const summed = lines.reduce((total, line) => total + Number(line.taxable_value || 0), 0);
-    const stated = Number(extracted.taxable_value || 0);
+    const stated = Number(e.taxable_value || 0);
     const drifts = stated > 0 && Math.abs(summed - stated) > 1;
 
     rows.append(el("tr", { className: `total${drifts ? " bad" : ""}` }, [
@@ -927,8 +928,29 @@ async function upload(files) {
   toast(`Uploading ${good.length} file${good.length > 1 ? "s" : ""}…`);
 
   try {
-    const result = await api("/api/documents", { method: "POST", body: form });
+    let result = await api("/api/documents", { method: "POST", body: form });
     if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
+
+    /* Files the system already holds. Skipped rather than read again - the
+       usual cause is uploading the same batch twice, and doing that quietly
+       leaves two identical sets of rows to work through. Insisting is allowed;
+       it just has to be deliberate. */
+    if (result.duplicates && result.duplicates.length) {
+      const again = confirm(
+        `${result.duplicates.join("\n\n")}\n\nUpload ${result.duplicates.length > 1
+          ? "them" : "it"} again anyway?`
+      );
+      if (again) {
+        const retry = new FormData();
+        for (const file of good) retry.append("files", file);
+        result = await api("/api/documents?allow_duplicates=true",
+                           { method: "POST", body: retry });
+      } else if (!result.captured.length) {
+        toast("Nothing new to read.");
+        await refresh();
+        return;
+      }
+    }
 
     const ids = result.captured.map((doc) => doc.id);
     if (!ids.length) return;
@@ -1108,6 +1130,117 @@ function taxRow(label, values) {
   ]);
 }
 
+/* The signed-in person, on the screen they land on. It was only in the sidebar
+   footer, which is below the fold on a short window and hidden entirely when
+   the sidebar collapses. */
+function profileCard() {
+  const user = session.user || {};
+  const name = user.name || user.email || "Signed in";
+  const initials = (user.name || user.email || "?")
+    .split(/[\s@._-]+/).filter(Boolean).slice(0, 2)
+    .map((part) => part[0].toUpperCase()).join("") || "?";
+  const isAdmin = user.role === "admin";
+
+  const facts = el("div", { className: "facts" });
+  if (state.info && state.info.company) {
+    facts.append(el("div", { className: "f" }, [
+      el("div", { className: "k", textContent: "Filing for" }),
+      el("div", { className: "v", textContent: state.info.company }),
+    ]));
+  }
+  facts.append(el("div", { className: "f" }, [
+    el("div", { className: "k", textContent: "Return period" }),
+    el("div", { className: "v", textContent: state.period || "—" }),
+  ]));
+  if (state.info && state.info.reader) {
+    facts.append(el("div", { className: "f" }, [
+      el("div", { className: "k", textContent: "Reader" }),
+      el("div", { className: "v", textContent:
+        state.info.reader === "heuristic" ? "Offline" : state.info.reader }),
+    ]));
+  }
+
+  return el("div", { className: "profile-card" }, [
+    el("div", { className: "avatar-lg", textContent: initials }),
+    el("div", { className: "who-block" }, [
+      el("div", { className: "nm" }, [
+        name, " ",
+        el("span", { className: `role-chip${isAdmin ? " admin" : ""}`,
+                     textContent: isAdmin ? "Administrator" : "User" }),
+      ]),
+      el("div", { className: "em", textContent: user.email || "" }),
+    ]),
+    facts,
+    el("div", { className: "acts" }, [
+      el("button", { className: "btn sm", textContent: "Account settings",
+                     onclick: () => show("settings") }),
+      el("button", { className: "btn sm ghost", textContent: "Sign out",
+                     onclick: () => signOut() }),
+    ]),
+  ]);
+}
+
+// --------------------------------------------------------------------------- //
+// Theme
+// --------------------------------------------------------------------------- //
+
+/* Three states rather than a two-way switch. "System" is the default and keeps
+   following the operating system, which is what most people actually want;
+   Light and Dark are an explicit override that survives a reload. Storing the
+   override means the absence of a stored value IS "system", so there is no
+   fourth state to reconcile. */
+const THEMES = [
+  ["system", "System", "M8 1.5v13M14.5 8a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z"],
+  ["light", "Light", "M8 3.2V1.8M8 14.2v-1.4M12.4 3.6l-1 1M4.6 11.4l-1 1M14.2 8h-1.4M3.2 8H1.8M12.4 12.4l-1-1M4.6 4.6l-1-1M11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"],
+  ["dark", "Dark", "M13.5 9.3A5.8 5.8 0 0 1 6.7 2.5 5.9 5.9 0 1 0 13.5 9.3z"],
+];
+
+function storedTheme() {
+  try {
+    const value = localStorage.getItem("gst.theme");
+    return value === "light" || value === "dark" ? value : "system";
+  } catch (_) {
+    return "system";
+  }
+}
+
+function applyTheme(choice) {
+  const root = document.documentElement;
+  if (choice === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", choice);
+  try {
+    if (choice === "system") localStorage.removeItem("gst.theme");
+    else localStorage.setItem("gst.theme", choice);
+  } catch (_) { /* the choice still applies for this page */ }
+  state.theme = choice;
+  renderThemeSwitch();
+}
+
+function renderThemeSwitch() {
+  const box = $("#theme-switch");
+  if (!box) return;
+  box.textContent = "";
+  for (const [value, label, path] of THEMES) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("width", "13"); svg.setAttribute("height", "13");
+    svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.5");
+    svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const d = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    d.setAttribute("d", path);
+    svg.append(d);
+
+    box.append(el("button", {
+      type: "button",
+      "aria-pressed": String(state.theme === value),
+      title: value === "system" ? "Follow the operating system" : `${label} mode`,
+      onclick: () => applyTheme(value),
+    }, [svg, el("span", { className: "seg-label", textContent: label })]));
+  }
+}
+
 // --------------------------------------------------------------------------- //
 // Navigation
 // --------------------------------------------------------------------------- //
@@ -1176,6 +1309,7 @@ async function refresh() {
 // --------------------------------------------------------------------------- //
 
 function wire() {
+  applyTheme(storedTheme());
   $("#gate-form").addEventListener("submit", submitGate);
 
   $("#btn-logout").addEventListener("click", async () => {
@@ -1446,6 +1580,8 @@ async function renderDashboard() {
     body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
     return;
   }
+
+  body.append(profileCard());
 
   const t = data.totals;
   body.append(el("div", { className: "stats" }, [
@@ -2424,13 +2560,32 @@ async function boot() {
     return;
   }
 
+  // Two separate failures, deliberately not caught together. Only the first is
+  // about the session; folding them into one catch meant a rendering bug threw
+  // the user out and reported itself as a sign-in error, which sends someone
+  // hunting for a password problem that does not exist.
   try {
     session.user = await api("/api/auth/me");
-    await enterApp();
   } catch (err) {
     // A token that no longer works is not an error worth alarming anyone with.
     setToken("");
     renderGate();
     if (!(err instanceof Unauthenticated)) gateAlert(err.message);
+    return;
+  }
+
+  try {
+    await enterApp();
+  } catch (err) {
+    // The session is good; a screen failed to draw. Keep them signed in, say
+    // what happened, and fall back to the inbox so the app is still usable.
+    console.error("Failed to render", state.screen, err);
+    toast(`Could not open that screen: ${err.message}`, "error");
+    try {
+      show("inbox");
+    } catch (fallbackErr) {
+      console.error("Inbox failed too", fallbackErr);
+      bootFailed(fallbackErr);
+    }
   }
 }

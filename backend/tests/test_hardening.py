@@ -530,6 +530,83 @@ def test_an_unsupported_file_is_rejected_at_staging(isolated_pipeline):
 
 
 # --------------------------------------------------------------------------- #
+# Not accepting the same invoice twice
+#
+# A real queue reached 337 documents holding 19 distinct invoices, because
+# nothing objected to the same file being uploaded again. The register check
+# kept the workbook clean, but only at the very last step - by which point
+# somebody had 273 redundant rows to work through.
+# --------------------------------------------------------------------------- #
+
+def test_the_same_file_twice_is_refused(isolated_pipeline):
+    pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+
+    with pytest.raises(pipeline.DuplicateUpload) as caught:
+        pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+
+    assert "already uploaded" in str(caught.value)
+    assert len(caught.value.existing) == 1
+    assert len(store.all_documents()) == 1, "the second upload must not create anything"
+
+
+def test_the_same_bytes_under_a_different_name_are_still_refused(isolated_pipeline):
+    """Saving the file again from a mail client renames it; it is the same
+    invoice, and the name is the least reliable thing about it."""
+    pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+    with pytest.raises(pipeline.DuplicateUpload):
+        pipeline.stage(INVOICE_TEXT, "invoice (1).txt", source="upload")
+
+
+def test_a_genuinely_different_file_is_accepted(isolated_pipeline):
+    pipeline.stage(INVOICE_TEXT, "one.txt", source="upload")
+    other = INVOICE_TEXT.replace(b"STAGE-1", b"STAGE-2")
+    assert len(pipeline.stage(other, "two.txt", source="upload")) == 1
+    assert len(store.all_documents()) == 2
+
+
+def test_a_duplicate_can_be_insisted_on(isolated_pipeline):
+    """Refusing outright would be wrong: sometimes you do mean it."""
+    pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+    again = pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload", allow_duplicate=True)
+    assert len(again) == 1
+    assert len(store.all_documents()) == 2
+
+
+def test_the_check_costs_nothing_before_the_file_is_stored(isolated_pipeline):
+    """The point of checking at the door: a repeated print run must not cost a
+    model call per invoice inside it before anyone notices."""
+    pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+    before = list((isolated_pipeline / "incoming").iterdir())
+
+    with pytest.raises(pipeline.DuplicateUpload):
+        pipeline.stage(INVOICE_TEXT, "invoice.txt", source="upload")
+
+    assert list((isolated_pipeline / "incoming").iterdir()) == before
+
+
+def test_the_same_invoice_in_a_different_file_is_flagged_after_reading(isolated_pipeline):
+    """The hash cannot see this one: emailed once, scanned later, same invoice.
+    A warning rather than a blocker - two queue entries are not yet a filing
+    error, but nobody should have to spot it themselves."""
+    pipeline.capture(INVOICE_TEXT, "emailed.txt", source="email")
+
+    # Same invoice number, different bytes - a trailing line is enough.
+    rescan = INVOICE_TEXT + b"\nScanned copy\n"
+    second = pipeline.capture(rescan, "scanned.txt", source="scan")[0]
+
+    codes = {issue["code"] for issue in second["issues"]}
+    assert "duplicate_in_queue" in codes
+    warning = next(i for i in second["issues"] if i["code"] == "duplicate_in_queue")
+    assert warning["severity"] == "warning", "it must not block posting on its own"
+    assert "emailed.txt" in warning["message"]
+
+
+def test_a_lone_invoice_is_not_flagged_as_its_own_duplicate(isolated_pipeline):
+    only = pipeline.capture(INVOICE_TEXT, "invoice.txt", source="upload")[0]
+    assert "duplicate_in_queue" not in {i["code"] for i in only["issues"]}
+
+
+# --------------------------------------------------------------------------- #
 # The read cache
 # --------------------------------------------------------------------------- #
 

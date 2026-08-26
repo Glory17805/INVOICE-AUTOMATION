@@ -509,6 +509,7 @@ async def upload_documents(
     request: Request,
     background: BackgroundTasks,
     files: list[UploadFile] = File(...),
+    allow_duplicates: bool = False,
     user: dict = Depends(require_user),
 ) -> dict:
     """Capture one or more invoices arriving by upload.
@@ -525,7 +526,7 @@ async def upload_documents(
     if declared.isdigit() and int(declared) > limit:
         raise HTTPException(413, f"That upload is larger than the {as_mb} limit.")
 
-    staged, errors = [], []
+    staged, errors, duplicates = [], [], []
     for upload in files:
         name = upload.filename or "document.pdf"
         data = await upload.read(limit + 1)
@@ -533,17 +534,27 @@ async def upload_documents(
             errors.append(f"{name}: larger than the {as_mb} limit.")
             continue
         try:
-            staged.extend(pipeline.stage(data, name, "upload"))
+            staged.extend(pipeline.stage(data, name, "upload",
+                                         allow_duplicate=allow_duplicates))
+        except pipeline.DuplicateUpload as exc:
+            # Not an error. The file is fine; the system simply already has it.
+            duplicates.append(str(exc))
         except ValueError as exc:
             errors.append(str(exc))
 
     if not staged and errors:
         raise HTTPException(400, "; ".join(errors))
 
-    accounts.record(user, "uploaded", {"count": len(staged),
-                                       "files": [d["filename"] for d in staged][:20]})
+    if staged:
+        accounts.record(user, "uploaded", {"count": len(staged),
+                                           "files": [d["filename"] for d in staged][:20]})
     background.add_task(pipeline.process_many, [doc["id"] for doc in staged])
-    return {"captured": [_summarise(d) for d in staged], "errors": errors, "reading": len(staged)}
+    return {
+        "captured": [_summarise(d) for d in staged],
+        "errors": errors,
+        "duplicates": duplicates,
+        "reading": len(staged),
+    }
 
 
 @app.post("/api/ingest/folder")
@@ -561,6 +572,10 @@ def ingest_folder(background: BackgroundTasks, user: dict = Depends(require_user
             continue
         try:
             captured.extend(pipeline.stage(path.read_bytes(), path.name, source="email"))
+        except pipeline.DuplicateUpload:
+            # A watch folder is read repeatedly by design; a file left sitting
+            # in it is the normal case, not something to report as a problem.
+            continue
         except ValueError as exc:
             errors.append(str(exc))
 

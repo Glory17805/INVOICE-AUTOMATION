@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import pipeline
+from app import db, pipeline, store
 
 
 def pytest_configure(config):
@@ -37,3 +37,29 @@ def offline_reader(request, monkeypatch):
     if request.node.get_closest_marker("live_llm"):
         return
     monkeypatch.setattr(pipeline, "has_credentials", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_database(tmp_path, monkeypatch):
+    """No test may touch the real database.
+
+    Several tests pointed `store.STORE_PATH` at a temporary file and believed
+    that isolated them. It stopped being true when the queue moved to SQLite:
+    the database path is derived in `db`, so those tests kept reading and
+    writing the live one. They had been quietly adding documents to a running
+    deployment's queue for as long as that was the case, and the evidence was a
+    real queue holding 337 documents for 19 distinct invoices.
+
+    Isolation belongs here rather than in each test, because getting it right
+    per-test is exactly what failed.
+    """
+    scratch = tmp_path / "isolated-data" / "store.json"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(store, "STORE_PATH", scratch)
+    monkeypatch.setattr(db, "STORE_PATH", scratch)
+    db.forget()
+    store._prepared.clear()
+    yield
+    db.forget()
+    store._prepared.clear()
