@@ -335,7 +335,10 @@ function renderPeriods() {
 }
 
 async function loadDocuments() {
-  state.documents = await api("/api/documents");
+  // Whole documents, not summaries: the Queue and Review screens read the
+  // extraction, the treatment and the issue list off these.
+  const page = await api("/api/documents?view=full");
+  state.documents = page.documents;
   for (const id of [...state.selected]) {
     if (!state.documents.some((d) => d.id === id && d.status === "ready")) state.selected.delete(id);
   }
@@ -1743,7 +1746,7 @@ async function renderHistory() {
   controls.append(chips);
   body.append(controls);
 
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ view: "summary" });
   if (state.historyQuery) params.set("q", state.historyQuery);
   if (state.historyFilter) params.set("status", state.historyFilter);
 

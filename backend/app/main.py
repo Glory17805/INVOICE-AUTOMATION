@@ -405,12 +405,21 @@ def list_documents(
     period: str | None = None,
     source: str | None = None,
     limit: int = 500,
+    view: str = "full",
     user: dict = Depends(require_user),
 ) -> dict:
-    """The invoice history, searchable and filterable.
+    """The invoice list, searchable and filterable.
 
     Search covers what a person would actually type looking for one invoice: its
     number, the other party, and the file it arrived in.
+
+    Two shapes, because two screens need different things and quietly serving
+    one to the other is how a list screen ends up with no data in it:
+
+    - `view=full` (default) returns whole documents. The Queue and Review
+      screens read the extraction, the tax treatment and the issue list.
+    - `view=summary` returns one flat row per document - number, party, amount,
+      status - which is all a history table renders, at a fraction of the size.
     """
     documents = store.all_documents()
 
@@ -436,9 +445,11 @@ def list_documents(
         documents = [d for d in documents if matches(d)]
 
     total = len(documents)
+    page = documents[:max(1, min(limit, 1000))]
     return {
         "total": total,
-        "documents": [_summarise(doc) for doc in documents[:max(1, min(limit, 1000))]],
+        "view": view,
+        "documents": [_summarise(doc) for doc in page] if view == "summary" else page,
     }
 
 
