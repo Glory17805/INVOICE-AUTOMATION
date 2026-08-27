@@ -8,23 +8,29 @@ pinned by the behaviour that would otherwise fail silently.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from fastapi import Depends
-
 from app import (
-    accounts, appsettings, auth, db, pipeline, runtime, singleton, store, workbook,
+    accounts,
+    appsettings,
+    auth,
+    db,
+    pipeline,
+    runtime,
+    singleton,
+    store,
+    workbook,
 )
 from app.config import IRA_INNOVATIONS
 from app.models import DocStatus, DocumentType
 
 from .test_gst import invoice
 from .test_workbook import PERIOD
-
 
 # --------------------------------------------------------------------------- #
 # Accounts
@@ -655,7 +661,7 @@ def test_posting_a_row_invalidates_the_cache(cached_workbook):
 
 def test_the_tax_position_is_recomputed_after_a_posting(cached_workbook):
     """The summary is cached on the same key space as the registers."""
-    before = workbook.tax_payable_summary(PERIOD).output_tax["cgst"]
+    before = Decimal(workbook.tax_payable_summary(PERIOD).output_tax["cgst"])
 
     from app.gst import rules
     treatment = rules.apply_gst(_a_sale("CACHE-2"), IRA_INNOVATIONS)
@@ -665,8 +671,10 @@ def test_the_tax_position_is_recomputed_after_a_posting(cached_workbook):
         "hsn_sac": None, "quantity": None, "unit_rate": None,
     }, PERIOD)
 
-    after = workbook.tax_payable_summary(PERIOD).output_tax["cgst"]
-    assert after == pytest.approx(before + 90.0)
+    after = Decimal(workbook.tax_payable_summary(PERIOD).output_tax["cgst"])
+    # Exact, not approximate: these are decimal strings now, so there is no
+    # float error left to tolerate (gap D2).
+    assert after == before + Decimal("90.00")
 
 
 # --------------------------------------------------------------------------- #

@@ -78,7 +78,7 @@ def ensure_account() -> None:
     """A usable admin on whatever database the server was pointed at."""
     global token
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from app import accounts   # noqa: PLC0415 - needs the path set up first
+    from app import accounts
 
     person = accounts.find_by_email(EMAIL)
     if person is None:

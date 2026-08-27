@@ -7,6 +7,7 @@ from the invoice's own date, and each period gets its own workbook.
 """
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -15,7 +16,6 @@ from app import workbook
 from app.models import DocumentType
 
 from .test_gst import invoice
-
 
 # --------------------------------------------------------------------------- #
 # Deriving a period
@@ -107,14 +107,16 @@ def test_a_new_period_carries_its_own_header():
 def test_a_new_period_starts_with_no_opening_credit():
     """Carrying May's credit into July would overstate it, which understates
     the tax due - the expensive direction to be wrong in."""
+    # Jun-26 does not exist here, so Jul-26 has no predecessor to inherit from
+    # and must not invent one (gap G2 carries it forward only when it is known).
     workbook.ensure_working_copy("Jul-26")
     summary = workbook.tax_payable_summary("Jul-26")
-    assert summary.itc_carry_forward == {"igst": 0.0, "cgst": 0.0, "sgst": 0.0}
+    assert summary.itc_carry_forward == {"igst": "0.00", "cgst": "0.00", "sgst": "0.00"}
     assert workbook.opening_credit_is_unset("Jul-26")
 
     # The master's own period keeps its real opening figures.
     workbook.ensure_working_copy("May-26")
-    assert workbook.tax_payable_summary("May-26").itc_carry_forward["igst"] == pytest.approx(620777)
+    assert Decimal(workbook.tax_payable_summary("May-26").itc_carry_forward["igst"]) == Decimal("620777")
     assert not workbook.opening_credit_is_unset("May-26")
 
 

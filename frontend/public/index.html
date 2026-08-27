@@ -5,17 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GST Invoice Automation</title>
   <link rel="stylesheet" href="/styles.css">
-  <script>
-    // Applied before the stylesheet paints, so a chosen theme never flashes
-    // the other one on load. Storage can throw (private windows, blocked
-    // cookies), and the page must still render if it does.
-    try {
-      var saved = localStorage.getItem("gst.theme");
-      if (saved === "light" || saved === "dark") {
-        document.documentElement.setAttribute("data-theme", saved);
-      }
-    } catch (e) { /* fall through to the system preference */ }
-  </script>
+  <!-- Sets the saved theme before the page paints. External rather than inline
+       because the Content-Security-Policy forbids inline script. -->
+  <script src="/theme.js"></script>
 </head>
 <body>
 

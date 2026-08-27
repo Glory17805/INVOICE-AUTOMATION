@@ -22,7 +22,7 @@ from threading import RLock
 
 from fastapi import HTTPException, Request
 
-from . import accounts
+from . import accounts, db
 from .config import api_key
 
 # A principal that is not a user row: the deployment's own service key.
@@ -44,7 +44,6 @@ _WINDOW_SECONDS = 15 * 60    # failures older than this are forgotten
 _LOCKOUT_SECONDS = 60        # grows with each further failure, to a ceiling
 _LOCKOUT_CEILING = 15 * 60
 
-_attempts: dict[str, list[float]] = {}
 _attempt_lock = RLock()
 
 
@@ -53,37 +52,44 @@ def _throttle_key(email: str, request: Request) -> str:
     return f"{(email or '').strip().casefold()}|{address}"
 
 
+def _recent(subject: str) -> list[float]:
+    """Failures inside the window, oldest first. Also drops what has aged out."""
+    cutoff = time.time() - _WINDOW_SECONDS
+    with _attempt_lock, db.connect() as c:
+        c.execute("DELETE FROM login_failures WHERE at < ?", (cutoff,))
+        rows = c.execute(
+            "SELECT at FROM login_failures WHERE subject = ? ORDER BY at", (subject,)
+        ).fetchall()
+    return [row["at"] for row in rows]
+
+
 def retry_after(email: str, request: Request) -> int:
     """Seconds the caller must wait, or 0 if they may try now."""
-    key = _throttle_key(email, request)
-    now = time.time()
-    with _attempt_lock:
-        failures = [t for t in _attempts.get(key, []) if now - t < _WINDOW_SECONDS]
-        _attempts[key] = failures
+    failures = _recent(_throttle_key(email, request))
     if len(failures) < _ATTEMPT_LIMIT:
         return 0
     # Each failure past the limit doubles the wait, up to the ceiling.
     over = len(failures) - _ATTEMPT_LIMIT
     wait = min(_LOCKOUT_SECONDS * (2 ** over), _LOCKOUT_CEILING)
-    elapsed = now - failures[-1]
-    return max(0, int(wait - elapsed))
+    return max(0, int(wait - (time.time() - failures[-1])))
 
 
 def note_failure(email: str, request: Request) -> None:
-    key = _throttle_key(email, request)
-    with _attempt_lock:
-        _attempts.setdefault(key, []).append(time.time())
+    with _attempt_lock, db.connect() as c:
+        c.execute("INSERT INTO login_failures (subject, at) VALUES (?, ?)",
+                  (_throttle_key(email, request), time.time()))
 
 
 def clear_failures(email: str, request: Request) -> None:
-    with _attempt_lock:
-        _attempts.pop(_throttle_key(email, request), None)
+    with _attempt_lock, db.connect() as c:
+        c.execute("DELETE FROM login_failures WHERE subject = ?",
+                  (_throttle_key(email, request),))
 
 
 def reset_throttle() -> None:
     """Tests only."""
-    with _attempt_lock:
-        _attempts.clear()
+    with _attempt_lock, db.connect() as c:
+        c.execute("DELETE FROM login_failures")
 
 
 # --------------------------------------------------------------------------- #

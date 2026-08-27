@@ -65,6 +65,32 @@ class FrontendHandler(SimpleHTTPRequestHandler):
         # These are working files that change as the app is developed; a cached
         # copy of app.js against a newer API is a confusing way to lose an hour.
         self.send_header("Cache-Control", "no-cache, must-revalidate")
+
+        # The session token lives in localStorage, so any script that runs on
+        # this origin owns an account. The page builds its DOM with textContent
+        # throughout and injects nothing - but that is a property of the current
+        # code rather than a boundary, and this makes it a boundary.
+        #
+        # connect-src has to allow the backend, which is a different origin by
+        # design. Everything else is same-origin only; there is no inline script
+        # and nothing is loaded from a CDN.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            f"connect-src 'self' {self.api_url}; "
+            "img-src 'self' data: blob:; "
+            "object-src 'none'; "
+            "frame-src 'self' blob:; "      # the review pane renders PDFs as blobs
+            "base-uri 'none'; "
+            "form-action 'none'; "
+            "frame-ancestors 'none'",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # frame-ancestors above covers modern browsers; this covers the rest.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # Nothing here needs a camera, a microphone or a location.
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         super().end_headers()
 
     def log_message(self, fmt, *args):

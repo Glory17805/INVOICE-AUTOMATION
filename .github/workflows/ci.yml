@@ -1,0 +1,52 @@
+# Runs the suite on every change.
+#
+# This exists because its absence is what let several real defects survive: a
+# README committed with control bytes in every path, three tests quietly making
+# live API calls, and those same tests writing to a running deployment's
+# database. All of them were visible to a machine and invisible to a person
+# who had stopped looking.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check backend
+
+      - name: Test
+        # No provider key in CI, which is the point: conftest forces the offline
+        # reader, so a test that reaches for the network fails here rather than
+        # silently spending someone's quota.
+        working-directory: backend
+        run: python -m pytest tests
+
+      - name: Check for control characters in tracked text
+        # A README once shipped with real 0x08 and 0x0c bytes where escape text
+        # belonged, making every quoted path uncopyable. Cheap to never repeat.
+        run: |
+          if git grep -nIP '[\x00-\x08\x0b\x0c\x0e-\x1f]' -- '*.md' '*.py' '*.js' '*.css' '*.html' '*.ps1' '*.txt' '*.toml' '*.yml'; then
+            echo "::error::control characters found in tracked text files"
+            exit 1
+          fi
+          echo "clean"

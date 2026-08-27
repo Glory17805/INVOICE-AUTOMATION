@@ -17,7 +17,7 @@ presented in the present tense.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import db
 
@@ -33,7 +33,7 @@ def record_read(provider: str, had_credentials: bool, reader: str, note: str | N
         "had_credentials": bool(had_credentials),
         "reader": reader,
         "note": note,
-        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     try:
         with db.LOCK, db.connect() as c:
@@ -42,7 +42,7 @@ def record_read(provider: str, had_credentials: bool, reader: str, note: str | N
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (_KEY, json.dumps(payload)),
             )
-    except Exception:  # noqa: BLE001 - telling the UI about a read must not break it
+    except Exception:
         pass
 
 
@@ -50,7 +50,7 @@ def _stored() -> dict | None:
     try:
         with db.LOCK, db.connect() as c:
             row = c.execute("SELECT value FROM settings WHERE key = ?", (_KEY,)).fetchone()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     if row is None:
         return None
@@ -83,5 +83,5 @@ def forget() -> None:
     try:
         with db.LOCK, db.connect() as c:
             c.execute("DELETE FROM settings WHERE key = ?", (_KEY,))
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass

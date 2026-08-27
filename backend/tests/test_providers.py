@@ -7,13 +7,11 @@ because "every invoice is being read offline" is the kind of thing that is
 expensive to discover late.
 """
 
-from pathlib import Path
 
 import pytest
 
 from app import config, pipeline
 from app.extract import gemini, llm
-from app.models import ExtractedInvoice
 
 from .test_gst import invoice
 
@@ -150,7 +148,8 @@ def test_no_key_at_all_names_the_provider_it_wants(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_gemini_refuses_without_a_key(monkeypatch, tmp_path):
-    pdf = tmp_path / "x.pdf"; pdf.write_bytes(b"%PDF-1.4\n")
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
     with pytest.raises(llm.ExtractionUnavailable, match="GEMINI_API_KEY"):
         gemini.extract(pdf)
 

@@ -17,15 +17,15 @@ Two things this module is careful about:
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from threading import RLock
-from typing import Any, Callable
+from typing import Any
 
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
 
 from . import period as periods
 from .config import IRA_INNOVATIONS, WORKBOOK_DIR, source_workbook
@@ -174,6 +174,28 @@ def ensure_working_copy(period: str) -> Path:
     return target
 
 
+def _closing_credit(period: str | None) -> dict[str, Decimal] | None:
+    """What a period leaves behind for the next one, or None if unknown.
+
+    Unused credit carries forward; credit consumed by that period's output tax
+    does not. Returns None rather than zeros when the period has no workbook
+    here, so the caller can tell "nothing left over" apart from "no idea".
+    """
+    if not period or not workbook_path(period).exists():
+        return None
+    try:
+        summary = tax_payable_summary(period)
+    except Exception:
+        return None
+
+    closing: dict[str, Decimal] = {}
+    for key in ("igst", "cgst", "sgst"):
+        available = Decimal(summary.itc_available[key])
+        used = Decimal(summary.output_tax[key])
+        closing[key] = max(available - used, Decimal("0"))
+    return closing
+
+
 def _reset_for_new_period(path: Path, period: str) -> None:
     """Turn a copy of the master into an empty workbook for another period."""
     wb = load_workbook(path)
@@ -186,13 +208,16 @@ def _reset_for_new_period(path: Path, period: str) -> None:
             _clear_row(ws, spec, row, doc_type)
         _rewrite_totals(ws, spec, find_totals_row(ws, spec))
 
-    # Opening credit belongs to this period, not the master's. It is left at
-    # zero rather than carried over, because an overstated opening credit
-    # understates the tax due - the expensive direction to be wrong in. The
-    # Tax Payable screen flags it until someone enters the real figure.
+    # Opening credit is the previous return's closing balance (gap G2). Where
+    # this application holds that return, the figure is known and carrying it
+    # is simply correct. Where it does not - the first period opened, or a gap
+    # in the sequence - it stays at zero and the Tax Payable screen says so,
+    # because an *invented* opening credit overstates the credit available,
+    # which understates the tax due: the expensive direction to be wrong in.
     tp = wb[TAX_PAYABLE]
-    for cell in ("E6", "F6", "G6"):
-        tp[cell] = 0
+    carried = _closing_credit(periods.previous(period))
+    for cell, key in (("E6", "igst"), ("F6", "cgst"), ("G6", "sgst")):
+        tp[cell] = float(carried[key]) if carried else 0
 
     _sync_tax_payable(wb)
     wb.save(path)
@@ -505,6 +530,66 @@ def _posted_keys(doc_type: DocumentType, period: str) -> list[tuple[str, str | N
 # Growing a register
 # --------------------------------------------------------------------------- #
 
+# The GSTR-1 sheet carries a B2B / B2C split beneath its totals, and a line that
+# checks the two against the register total. In the master workbook both were
+# hand-written row lists - B2B was "=J8+J34", B2C was a typed-out sum of rows 9
+# to 50 - so rows 51 onward belonged to neither and the check silently stopped
+# reconciling once a month ran past about 43 invoices (gap G1).
+#
+# Derived from the data instead: a sale is B2B when the customer has a GSTIN and
+# B2C when they do not, which is the actual rule, and it keeps holding as the
+# register grows.
+_RECON_COLUMNS = ("J", "K", "L", "M", "N")
+_GSTIN_COLUMN = "D"
+
+
+def _reconciliation_rows(ws) -> tuple[int, int] | None:
+    """Locate the B2B and B2C rows by their labels, not by row number.
+
+    Growing the register inserts a row at the totals line, which pushes this
+    whole block down; anything that assumed row 75 would be wrong the first
+    time that happened.
+    """
+    b2b = b2c = None
+    for row in range(1, ws.max_row + 1):
+        label = _cell(ws, "I", row).value
+        if not isinstance(label, str):
+            continue
+        text = label.strip().upper()
+        if text == "B2B":
+            b2b = row
+        elif text == "B2C":
+            b2c = row
+    if b2b is None or b2c is None:
+        return None
+    return b2b, b2c
+
+
+def _sync_reconciliation(ws, spec: SheetSpec) -> None:
+    """Rewrite the B2B/B2C split to cover every data row."""
+    if spec.name != "GSTR-1":
+        return
+    rows = _reconciliation_rows(ws)
+    if rows is None:
+        return
+    b2b, b2c = rows
+
+    first = spec.first_data_row
+    last = find_totals_row(ws, spec) - 1
+    if last < first:
+        return
+
+    gstin_range = f"${_GSTIN_COLUMN}${first}:${_GSTIN_COLUMN}${last}"
+    for column in _RECON_COLUMNS:
+        values = f"{column}{first}:{column}{last}"
+        # A customer GSTIN present means B2B; SUMIF's "<>" is "not blank".
+        _cell(ws, column, b2b).value = f'=SUMIF({gstin_range},"<>",{values})'
+        # Everything the register holds that is not B2B. Expressed as a
+        # remainder so the two always add to the total by construction, which
+        # is what the check line below them is for.
+        _cell(ws, column, b2c).value = f"=SUM({values})-{column}{b2b}"
+
+
 def _rewrite_totals(ws, spec: SheetSpec, totals_row: int) -> None:
     last_data_row = totals_row - 1
     if last_data_row < spec.first_data_row:
@@ -513,6 +598,7 @@ def _rewrite_totals(ws, spec: SheetSpec, totals_row: int) -> None:
         _cell(ws, column, totals_row).value = (
             f"=SUM({column}{spec.first_data_row}:{column}{last_data_row})"
         )
+    _sync_reconciliation(ws, spec)
 
 
 def _sync_tax_payable(wb) -> None:
@@ -801,8 +887,18 @@ def _sum_columns(ws, spec: SheetSpec, columns: dict[str, str]) -> dict[str, Deci
     return {key: _q(value) for key, value in totals.items()}
 
 
-def _floats(values: dict[str, Decimal]) -> dict[str, float]:
-    return {key: float(value) for key, value in values.items()}
+def _floats(values: dict[str, Decimal]) -> dict[str, str]:
+    """Money as an exact decimal string (gap D2).
+
+    These are rupee amounts that get compared against a filed return. A float
+    cannot hold 616509.10 exactly, and every hop through one is a chance for a
+    figure to arrive a paisa out with nothing to show why. The arithmetic is
+    already Decimal end to end; this stops the last step throwing that away.
+
+    Strings are what the browser wants anyway - it formats with
+    toLocaleString and never does arithmetic on these.
+    """
+    return {key: f"{value:.2f}" for key, value in values.items()}
 
 
 def tax_payable_summary(period: str) -> TaxPayableSummary:

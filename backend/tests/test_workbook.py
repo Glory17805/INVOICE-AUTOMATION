@@ -16,7 +16,6 @@ from app.models import DocumentType
 
 from .test_gst import invoice
 
-
 # Every fixture invoice below is dated in May 2026, so they file against the
 # period the master workbook itself covers.
 PERIOD = "May-26"
@@ -189,14 +188,14 @@ def test_unposting_clears_the_row_and_restores_the_template(fresh_workbook):
 def test_tax_payable_reflects_the_workbooks_own_opening_position(fresh_workbook):
     summary = workbook.tax_payable_summary(PERIOD)
     # ITC carried forward, straight off the Tax Payable sheet.
-    assert summary.itc_carry_forward["igst"] == pytest.approx(620777)
-    assert summary.itc_carry_forward["cgst"] == pytest.approx(33262)
+    assert Decimal(summary.itc_carry_forward["igst"]) == Decimal("620777")
+    assert Decimal(summary.itc_carry_forward["cgst"]) == Decimal("33262")
     # Opening ITC available matches the workbook's own May-26 figures.
-    assert summary.itc_available["igst"] == pytest.approx(616509)
-    assert summary.itc_available["cgst"] == pytest.approx(33354)
-    assert summary.itc_available["sgst"] == pytest.approx(33354)
+    assert Decimal(summary.itc_available["igst"]) == Decimal("616509")
+    assert Decimal(summary.itc_available["cgst"]) == Decimal("33354")
+    assert Decimal(summary.itc_available["sgst"]) == Decimal("33354")
     # No sales entered yet, so no output tax.
-    assert summary.output_tax["cgst"] == pytest.approx(0)
+    assert Decimal(summary.output_tax["cgst"]) == Decimal("0")
 
 
 def test_posting_a_sale_moves_the_output_tax_position(fresh_workbook):
@@ -206,10 +205,10 @@ def test_posting_a_sale_moves_the_output_tax_position(fresh_workbook):
         place_of_supply="Andhra Pradesh", taxable_value=4881.10, gst_rate_percent=18,
     ))
     summary = workbook.tax_payable_summary(PERIOD)
-    assert summary.output_tax["cgst"] == pytest.approx(439.30)
-    assert summary.output_tax["sgst"] == pytest.approx(439.30)
+    assert Decimal(summary.output_tax["cgst"]) == Decimal("439.30")
+    assert Decimal(summary.output_tax["sgst"]) == Decimal("439.30")
     # Credit on hand far exceeds it, so nothing is payable in cash.
-    assert summary.net_payable["cgst"] == pytest.approx(0)
+    assert Decimal(summary.net_payable["cgst"]) == Decimal("0")
 
 
 def test_gstr1_grows_past_its_last_template_row(fresh_workbook):
@@ -246,7 +245,7 @@ def test_sales_totals_reconcile_with_the_sheet_sum(fresh_workbook):
     expected = Decimal("0")
     for amount in [Decimal("1000"), Decimal("2500.55"), Decimal("700.25")]:
         expected += (amount * Decimal("0.18") / 2).quantize(Decimal("0.01"))
-    assert summary.output_tax["cgst"] == pytest.approx(float(expected))
+    assert Decimal(summary.output_tax["cgst"]) == expected
 
 
 # --------------------------------------------------------------------------- #
@@ -351,9 +350,9 @@ def test_a_hand_typed_inter_state_sale_is_not_read_as_cgst_and_sgst_too(fresh_wo
 
     # And it must not inflate the position the Tax Payable screen reports.
     summary = workbook.tax_payable_summary(PERIOD)
-    assert summary.output_tax["igst"] == pytest.approx(1800.0)
-    assert summary.output_tax["cgst"] == pytest.approx(0.0)
-    assert summary.output_tax["sgst"] == pytest.approx(0.0)
+    assert Decimal(summary.output_tax["igst"]) == Decimal("1800.0")
+    assert Decimal(summary.output_tax["cgst"]) == Decimal("0.0")
+    assert Decimal(summary.output_tax["sgst"]) == Decimal("0.0")
 
 
 def test_a_hand_typed_intra_state_sale_reads_back_as_typed(fresh_workbook):

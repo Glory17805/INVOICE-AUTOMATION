@@ -23,7 +23,7 @@ import hmac
 import json
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from . import db
 
@@ -49,7 +49,7 @@ class AccountError(ValueError):
 # --------------------------------------------------------------------------- #
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _stamp(moment: datetime | None = None) -> str:
@@ -345,7 +345,56 @@ def user_for_token(token: str) -> dict | None:
             return None
         if not row["is_active"]:
             return None
+
+        # Slide the expiry forward on use, so somebody working daily is not
+        # signed out mid-week by a clock that started when they first signed in.
+        # Written only when it has moved by more than an hour, to keep a read
+        # from becoming a write on every single request.
+        fresh = _now() + timedelta(days=SESSION_DAYS)
+        try:
+            current = datetime.fromisoformat(row["expires_at"])
+            stale = (fresh - current).total_seconds() > 3600
+        except ValueError:
+            stale = True
+        if stale:
+            c.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
+                      (_stamp(fresh), _token_hash(token)))
     return _public(row)
+
+
+def sessions_for(user_id: str, current_token: str | None = None) -> list[dict]:
+    """Every live session on an account, so somebody can see and end them."""
+    now_hash = _token_hash(current_token) if current_token else None
+    with db.LOCK, db.connect() as c:
+        rows = c.execute(
+            "SELECT token_hash, created_at, expires_at, user_agent FROM sessions "
+            "WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [
+        {
+            # An identifier for revoking, which is not the token itself.
+            "id": row["token_hash"][:16],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "user_agent": row["user_agent"] or "",
+            "current": row["token_hash"] == now_hash,
+        }
+        for row in rows
+        if not _expired(row["expires_at"])
+    ]
+
+
+def revoke_session(user_id: str, session_id: str) -> bool:
+    """End one session by the short id `sessions_for` handed out."""
+    with db.LOCK, db.connect() as c:
+        rows = c.execute("SELECT token_hash FROM sessions WHERE user_id = ?",
+                         (user_id,)).fetchall()
+        match = next((r["token_hash"] for r in rows if r["token_hash"][:16] == session_id), None)
+        if match is None:
+            return False
+        c.execute("DELETE FROM sessions WHERE token_hash = ?", (match,))
+        return True
 
 
 def close_session(token: str) -> None:
@@ -415,8 +464,24 @@ def record(user: dict | None, action: str, detail: dict | str | None = None) -> 
                 "VALUES (?, ?, ?, ?, ?)",
                 (_stamp(), (user or {}).get("id"), (user or {}).get("email"), action, payload),
             )
-    except Exception:  # noqa: BLE001 - auditing must never break the thing audited
+    except Exception:
         pass
+
+
+def prune_activity(keep_days: int = 400) -> int:
+    """Drop audit entries past the retention period.
+
+    The default outlives a financial year plus a comfortable margin, so a
+    question asked about last year's filings can still be answered. Unbounded
+    growth was the alternative, and an audit trail nobody has set a policy on is
+    a policy by accident.
+    """
+    cutoff = _stamp(_now() - timedelta(days=keep_days))
+    try:
+        with db.LOCK, db.connect() as c:
+            return c.execute("DELETE FROM activity WHERE at < ?", (cutoff,)).rowcount
+    except Exception:
+        return 0
 
 
 def activity(limit: int = 100) -> list[dict]:

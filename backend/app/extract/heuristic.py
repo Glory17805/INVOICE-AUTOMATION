@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from itertools import combinations
 from pathlib import Path
 
-from ..models import ExtractedInvoice, LineItem
+from ..models import ExtractedInvoice
 from .pdftext import document_text
 
 GSTIN_PATTERN = re.compile(r"\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b")

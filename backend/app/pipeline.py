@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-from datetime import date, datetime
 from pathlib import Path
+from typing import ClassVar
 
-from . import runtime, store, workbook
 from . import period as periods
+from . import runtime, store, uploads, workbook
 from .config import (
-    ARCHIVE_DIR, INCOMING_DIR, IRA_INNOVATIONS, approval_mode, ensure_dirs,
-    extraction_provider, has_credentials,
+    ARCHIVE_DIR,
+    INCOMING_DIR,
+    IRA_INNOVATIONS,
+    approval_mode,
+    ensure_dirs,
+    extraction_provider,
+    has_credentials,
 )
 from .extract import gemini as gemini_extractor
 from .extract import heuristic
@@ -65,15 +70,16 @@ class Stage:
     POSTED = "posted"
     FAILED = "failed"
 
-    # In order, with the words shown on the Processing screen.
-    SEQUENCE = [
+    # In order, with the words shown on the Processing screen. A tuple because
+    # nothing should be appending stages at runtime.
+    SEQUENCE: ClassVar[tuple[tuple[str, str], ...]] = (
         (UPLOADED, "Invoice received"),
         (READING, "Reading the document"),
         (EXTRACTED, "Invoice details extracted"),
         (CHECKED, "GST rules applied and checked"),
         (DONE, "Ready for review"),
         (POSTED, "Written to the workbook"),
-    ]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +115,15 @@ def stage(data: bytes, filename: str, source: str = "upload",
         raise ValueError(
             f"{safe_name}: unsupported file type. Accepted: {', '.join(sorted(SUPPORTED_SUFFIXES))}"
         )
+
+    # The extension says what it is called; the bytes say what it is. A file
+    # that disagrees with itself is refused here rather than failing later in a
+    # parser, where the message would be about a broken PDF rather than about
+    # the file not being one.
+    try:
+        uploads.verify(data, safe_name, suffix)
+    except uploads.RejectedUpload as exc:
+        raise ValueError(str(exc)) from exc
 
     # Checked before anything is stored or read: an accidental second upload of
     # the same batch should cost nothing, not a model call per invoice in it.
@@ -196,7 +211,7 @@ def process_many(doc_ids: list[str]) -> None:
     for doc_id in doc_ids:
         try:
             process(doc_id)
-        except Exception as exc:  # noqa: BLE001 - a background task must not die
+        except Exception as exc:
             store.update(
                 doc_id,
                 {

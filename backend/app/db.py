@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- Failed sign-ins. In a table rather than a process dictionary because the
+-- backend restarts often, and a lockout that clears on restart is one an
+-- attacker can clear by waiting for a deploy.
+CREATE TABLE IF NOT EXISTS login_failures (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL,     -- email and address together
+    at      REAL NOT NULL      -- unix seconds
+);
+CREATE INDEX IF NOT EXISTS login_failures_subject ON login_failures(subject, at);
+
 -- Who did what. A filing system gets asked this by auditors, so it is a table
 -- rather than a log line that rotates away.
 CREATE TABLE IF NOT EXISTS activity (

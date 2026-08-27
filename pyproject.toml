@@ -1,0 +1,58 @@
+# Tooling configuration. There is no package to build here - the backend runs
+# from source - so this file exists for the linter and the test runner.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["backend"]
+exclude = ["backend/data", "backend/backups", "docs"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes: undefined names, unused imports
+    "I",         # import ordering
+    "B",         # bugbear: mutable defaults, shadowed loop vars, and friends
+    "UP",        # pyupgrade
+    "C4",        # comprehensions
+    "SIM",       # obvious simplifications
+    "RUF",       # ruff's own
+]
+ignore = [
+    "E501",      # line length is checked by the formatter, not here
+    "B008",      # Depends(...) in a default is how FastAPI is written
+    "SIM105",    # contextlib.suppress is not always clearer than try/except/pass
+    "SIM103",    # `if a: return True; if b: return True; return False` states two
+                 # distinct reasons separately, which reads better than or-ing them
+    "C408",      # dict(a=1, b=2) as a keyword form is clearer than a brace literal
+                 # for the wide test fixtures that spell out an invoice field by field
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose, to pin behaviour that has no
+# public surface, and import after adjusting sys.path.
+"backend/tests/*" = ["SLF001", "E402", "SIM117"]
+# The provider registry sits between imports by design; see the comment there.
+"backend/app/pipeline.py" = ["E402"]
+# `str, Enum` is deliberate: these values are serialised straight to JSON and
+# compared against strings from the browser. StrEnum would change that on 3.11+.
+"backend/app/models.py" = ["UP042"]
+# Tools set sys.path before importing the app, which is the point of them.
+"backend/tools/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+addopts = "-q"
+# Fail on a warning that would otherwise scroll past unread. Two bugs in this
+# suite announced themselves as a warning before they announced themselves as
+# a failure.
+filterwarnings = [
+    "error::DeprecationWarning:app.*",
+]
+markers = [
+    "live_llm: test may call a real LLM provider; excluded from the offline default.",
+]

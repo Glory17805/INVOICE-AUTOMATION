@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -56,12 +55,12 @@ class DocStatus(str, Enum):
 class LineItem(BaseModel):
     """One row of the invoice's product/service table."""
 
-    description: Optional[str]
-    hsn_sac: Optional[str]
-    quantity: Optional[float]
-    unit_rate: Optional[float]
-    taxable_value: Optional[float]
-    gst_rate_percent: Optional[float]
+    description: str | None
+    hsn_sac: str | None
+    quantity: float | None
+    unit_rate: float | None
+    taxable_value: float | None
+    gst_rate_percent: float | None
 
 
 class ExtractedInvoice(BaseModel):
@@ -72,47 +71,47 @@ class ExtractedInvoice(BaseModel):
     register the document belongs to.
     """
 
-    document_type: Optional[str] = Field(
+    document_type: str | None = Field(
         description=(
             "One of 'sales', 'purchase', 'credit_note', 'rcm' - your best read of what "
             "this document is from the perspective of Ira Innovations. This is a hint; "
             "leave it null if genuinely unclear."
         )
     )
-    invoice_number: Optional[str] = Field(description="Invoice, bill, or credit note number exactly as printed.")
-    invoice_date: Optional[str] = Field(description="Document date exactly as printed, e.g. '31-May-2026' or '23/12/2025'.")
+    invoice_number: str | None = Field(description="Invoice, bill, or credit note number exactly as printed.")
+    invoice_date: str | None = Field(description="Document date exactly as printed, e.g. '31-May-2026' or '23/12/2025'.")
 
-    supplier_name: Optional[str] = Field(description="Legal or trade name of the party issuing the document (the seller).")
-    supplier_gstin: Optional[str] = Field(description="15-character GSTIN of the supplier, uppercase, no spaces.")
-    supplier_address: Optional[str] = Field(description="Supplier address or state as printed.")
+    supplier_name: str | None = Field(description="Legal or trade name of the party issuing the document (the seller).")
+    supplier_gstin: str | None = Field(description="15-character GSTIN of the supplier, uppercase, no spaces.")
+    supplier_address: str | None = Field(description="Supplier address or state as printed.")
 
-    recipient_name: Optional[str] = Field(description="Name of the party being billed (the buyer/customer).")
-    recipient_gstin: Optional[str] = Field(description="15-character GSTIN of the recipient, or null if unregistered.")
-    recipient_address: Optional[str] = Field(description="Recipient address or state as printed.")
+    recipient_name: str | None = Field(description="Name of the party being billed (the buyer/customer).")
+    recipient_gstin: str | None = Field(description="15-character GSTIN of the recipient, or null if unregistered.")
+    recipient_address: str | None = Field(description="Recipient address or state as printed.")
 
-    place_of_supply: Optional[str] = Field(
+    place_of_supply: str | None = Field(
         description="Place of supply exactly as printed, e.g. 'Andhra Pradesh ( 28 )'. Null if not stated."
     )
-    reverse_charge: Optional[bool] = Field(
+    reverse_charge: bool | None = Field(
         description="True only if the document explicitly says reverse charge is applicable ('Yes')."
     )
-    is_credit_note: Optional[bool] = Field(
+    is_credit_note: bool | None = Field(
         description="True if this document is a credit note or a refund/adjustment note rather than a tax invoice."
     )
 
-    hsn_sac: Optional[str] = Field(description="Primary HSN or SAC code on the document.")
+    hsn_sac: str | None = Field(description="Primary HSN or SAC code on the document.")
     line_items: list[LineItem] = Field(description="Every line of the product/service table. Empty list if none is present.")
 
-    taxable_value: Optional[float] = Field(description="Total taxable value before tax, as stated on the document.")
-    gst_rate_percent: Optional[float] = Field(description="GST rate as a percentage, e.g. 18 for 18%, 5 for 5%.")
-    cgst_amount: Optional[float] = Field(description="Central tax amount stated on the document, else null.")
-    sgst_amount: Optional[float] = Field(description="State tax amount stated on the document, else null.")
-    igst_amount: Optional[float] = Field(description="Integrated tax amount stated on the document, else null.")
-    cess_amount: Optional[float] = Field(description="Cess amount stated on the document, else null.")
-    total_amount: Optional[float] = Field(description="Invoice grand total including tax, as stated.")
+    taxable_value: float | None = Field(description="Total taxable value before tax, as stated on the document.")
+    gst_rate_percent: float | None = Field(description="GST rate as a percentage, e.g. 18 for 18%, 5 for 5%.")
+    cgst_amount: float | None = Field(description="Central tax amount stated on the document, else null.")
+    sgst_amount: float | None = Field(description="State tax amount stated on the document, else null.")
+    igst_amount: float | None = Field(description="Integrated tax amount stated on the document, else null.")
+    cess_amount: float | None = Field(description="Cess amount stated on the document, else null.")
+    total_amount: float | None = Field(description="Invoice grand total including tax, as stated.")
 
-    quantity: Optional[float] = Field(description="Total quantity across all lines, if the document totals it.")
-    notes: Optional[str] = Field(description="Anything ambiguous or unusual a human reviewer should know. Null if nothing.")
+    quantity: float | None = Field(description="Total quantity across all lines, if the document totals it.")
+    notes: str | None = Field(description="Anything ambiguous or unusual a human reviewer should know. Null if nothing.")
 
 
 class GstTreatment(BaseModel):
@@ -120,10 +119,10 @@ class GstTreatment(BaseModel):
 
     document_type: DocumentType
     supply_type: SupplyType
-    supplier_state_code: Optional[str]
-    supplier_state_name: Optional[str]
-    place_of_supply_code: Optional[str]
-    place_of_supply_name: Optional[str]
+    supplier_state_code: str | None
+    supplier_state_name: str | None
+    place_of_supply_code: str | None
+    place_of_supply_name: str | None
     rate: Decimal  # fraction, e.g. Decimal("0.18")
     taxable_value: Decimal
     cgst: Decimal
@@ -132,8 +131,8 @@ class GstTreatment(BaseModel):
     cess: Decimal
     total_tax: Decimal
     invoice_total: Decimal
-    counterparty_name: Optional[str]
-    counterparty_gstin: Optional[str]
+    counterparty_name: str | None
+    counterparty_gstin: str | None
     # "B2B" when the counterparty is GST-registered, "B2C" when they are not.
     # The GSTR-1 sheet splits its totals along exactly this line.
     supply_category: str
@@ -147,16 +146,18 @@ class RegisterRow(BaseModel):
 
     sheet: str
     row: int
-    values: dict[str, Optional[str]]
+    values: dict[str, str | None]
 
 
 class TaxPayableSummary(BaseModel):
-    itc_carry_forward: dict[str, float]
-    itc_current_purchases: dict[str, float]
-    credit_note_reversal: dict[str, float]
-    rcm_input: dict[str, float]
-    itc_available: dict[str, float]
-    output_tax: dict[str, float]
-    net_payable: dict[str, float]
-    rcm_cash_payable: dict[str, float]
+    """Every figure is a decimal string, not a float - see workbook._floats."""
+
+    itc_carry_forward: dict[str, str]
+    itc_current_purchases: dict[str, str]
+    credit_note_reversal: dict[str, str]
+    rcm_input: dict[str, str]
+    itc_available: dict[str, str]
+    output_tax: dict[str, str]
+    net_payable: dict[str, str]
+    rcm_cash_payable: dict[str, str]
     return_period: str

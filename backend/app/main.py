@@ -13,21 +13,33 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import accounts, appsettings, auth, pipeline, runtime, singleton, store, workbook
 from . import period as periods
 from .auth import require_admin, require_user
 from .config import (
-    extraction_provider, gemini_tier, training_risk,
-    DATA_DIR, api_key, app_url, approval_mode, credential_source, ensure_dirs, extraction_model,
-    frontend_origins, has_credentials, lock_path, max_upload_bytes,
+    DATA_DIR,
+    api_key,
+    app_url,
+    approval_mode,
+    credential_source,
+    ensure_dirs,
+    extraction_model,
+    extraction_provider,
+    frontend_origins,
+    gemini_tier,
+    has_credentials,
+    lock_path,
+    max_upload_bytes,
+    training_risk,
 )
 from .models import DocStatus, DocumentType
 
@@ -90,6 +102,65 @@ app.add_middleware(
 # --------------------------------------------------------------------------- #
 # Open routes
 # --------------------------------------------------------------------------- #
+
+# --------------------------------------------------------------------------- #
+# Security headers and unhandled errors (gaps S4, A5)
+# --------------------------------------------------------------------------- #
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """The last line before a stack trace reaches a browser.
+
+    The person who hits this is an accountant mid-filing, and "Internal Server
+    Error" does not tell them whether their invoice posted. So the detail goes
+    to the log with a reference, and the reference is what the caller sees:
+    enough to find the exact traceback, nothing about the internals of a system
+    holding a company's tax records.
+    """
+    reference = uuid.uuid4().hex[:8]
+    log.exception("unhandled error ref=%s %s %s", reference, request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": (
+                "Something went wrong at our end and this request did not complete. "
+                f"Nothing was written. Quote reference {reference} if you report it."
+            ),
+            "reference": reference,
+        },
+    )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers every response carries.
+
+    This is a JSON API that never returns HTML, so the policy is stricter than
+    a page's: nothing may frame it, nothing may be loaded from it, and a
+    browser must not second-guess a declared content type.
+
+    HSTS only over TLS, on purpose: sent over plain HTTP browsers ignore it,
+    and setting it while developing on 127.0.0.1 pins a localhost HSTS entry
+    that then breaks every other local project until it is cleared by hand.
+    """
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "no-referrer")
+    headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    )
+    if request.url.path.startswith("/api/"):
+        # Invoice data and session state must never sit in a shared cache.
+        headers.setdefault("Cache-Control", "no-store")
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 
 @app.get("/api/health")
 def health() -> dict:
@@ -154,7 +225,7 @@ def signup(body: Signup, request: Request) -> dict:
         user = accounts.create_user(body.email, body.name, body.password,
                                     role=role, approved=approved)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
 
     if first_account:
         accounts.record(user, "signup", "first account, made administrator")
@@ -187,7 +258,7 @@ def login(body: Credentials, request: Request) -> dict:
     except accounts.AccountError as exc:
         auth.note_failure(body.email, request)
         accounts.record(None, "login_failed", {"email": body.email})
-        raise HTTPException(401, str(exc))
+        raise HTTPException(401, str(exc)) from exc
 
     auth.clear_failures(body.email, request)
     token = accounts.open_session(user["id"], request.headers.get("User-Agent"))
@@ -234,7 +305,7 @@ def reset_password(body: ResetBody) -> dict:
     try:
         user = accounts.complete_reset(body.token, body.password)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "password_reset_completed")
     return {"reset": True, "email": user["email"]}
 
@@ -260,7 +331,7 @@ def update_me(body: Profile, user: dict = Depends(require_user)) -> dict:
     try:
         updated = accounts.update_user(user["id"], name=body.name, email=body.email)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(updated, "profile_updated")
     return updated
 
@@ -279,7 +350,7 @@ def change_password(body: PasswordChange, request: Request,
         accounts.authenticate(user["email"], body.current_password)
         accounts.set_password(user["id"], body.new_password)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
 
     accounts.record(user, "password_changed")
     # set_password ends every session, including this one. Issue a fresh token
@@ -543,7 +614,10 @@ async def upload_documents(
             errors.append(str(exc))
 
     if not staged and errors:
-        raise HTTPException(400, "; ".join(errors))
+        # Several files may have failed for different reasons; the messages are
+        # already collected, and there is no single exception still in scope to
+        # chain to - Python unbinds the name at the end of its except block.
+        raise HTTPException(400, "; ".join(errors)) from None
 
     if staged:
         accounts.record(user, "uploaded", {"count": len(staged),
@@ -590,7 +664,7 @@ def ingest_folder(background: BackgroundTasks, user: dict = Depends(require_user
 def reprocess(doc_id: str, background: BackgroundTasks,
               user: dict = Depends(require_user)) -> dict:
     if store.get(doc_id) is None:
-        raise HTTPException(404, "No such document.")
+        raise HTTPException(404, "No such document.") from None
     store.update(doc_id, {"stage": pipeline.Stage.UPLOADED, "status": DocStatus.NEW.value,
                           "error": None, "failure_reason": None},
                  event="reread_requested", actor=user)
@@ -643,7 +717,7 @@ def revise_document(doc_id: str, revision: Revision,
     try:
         return pipeline.revise(doc_id, revision.model_dump(), actor=user)
     except KeyError:
-        raise HTTPException(404, "No such document.")
+        raise HTTPException(404, "No such document.") from None
 
 
 @app.post("/api/documents/{doc_id}/confirm")
@@ -652,9 +726,9 @@ def confirm_document(doc_id: str, override: bool = False,
     try:
         posted = pipeline.confirm(doc_id, override=override, actor=user)
     except KeyError:
-        raise HTTPException(404, "No such document.")
+        raise HTTPException(404, "No such document.") from None
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
 
     accounts.record(user, "posted_with_override" if override else "posted", {
         "document": doc_id, "sheet": posted.get("sheet"), "row": posted.get("row"),
@@ -668,9 +742,9 @@ def unpost_document(doc_id: str, user: dict = Depends(require_user)) -> dict:
     try:
         result = pipeline.unpost(doc_id, actor=user)
     except KeyError:
-        raise HTTPException(404, "No such document.")
+        raise HTTPException(404, "No such document.") from None
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     accounts.record(user, "unposted", {"document": doc_id})
     return result
 
@@ -685,7 +759,7 @@ def register(register: str, period: str | None = None,
     try:
         doc_type = DocumentType(register)
     except ValueError:
-        raise HTTPException(404, f"Unknown register {register!r}.")
+        raise HTTPException(404, f"Unknown register {register!r}.") from None
     period = _resolve_period(period)
     return {
         "register": doc_type.value,
@@ -794,7 +868,7 @@ def put_settings(body: SettingsBody, user: dict = Depends(require_admin)) -> dic
     try:
         values = appsettings.update(body.model_dump())
     except ValueError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "settings_updated", body.model_dump())
     return {"values": values, "options": appsettings.options()}
 
@@ -820,7 +894,7 @@ def admin_create_user(body: NewUser, user: dict = Depends(require_admin)) -> dic
     try:
         created = accounts.create_user(body.email, body.name, body.password, body.role)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "user_created", {"email": created["email"], "role": created["role"]})
     return created
 
@@ -841,7 +915,7 @@ def admin_update_user(user_id: str, body: UserPatch,
             role=body.role, is_active=body.is_active,
         )
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "user_updated", {"user": user_id, **body.model_dump(exclude_none=True)})
     return updated
 
@@ -861,7 +935,7 @@ def admin_approve_user(user_id: str, role: str = "user",
         if role != approved["role"]:
             approved = accounts.update_user(user_id, role=role)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "user_approved", {"email": approved["email"], "role": approved["role"]})
     return approved
 
@@ -873,7 +947,7 @@ def admin_delete_user(user_id: str, user: dict = Depends(require_admin)) -> dict
     try:
         accounts.delete_user(user_id)
     except accounts.AccountError as exc:
-        raise HTTPException(400, str(exc))
+        raise HTTPException(400, str(exc)) from exc
     accounts.record(user, "user_deleted", {"user": user_id})
     return {"deleted": user_id}
 

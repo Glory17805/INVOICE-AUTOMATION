@@ -71,7 +71,11 @@ def acquire(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     previous = _previous_holder(path)
 
-    handle = open(path, "r+b" if path.exists() else "w+b")
+    # Deliberately not a context manager: the lock lasts as long as the handle
+    # does, so closing it here would release the claim immediately. It is held
+    # in a module-level variable for the life of the process and released by
+    # release(), or by the OS when the process exits.
+    handle = open(path, "r+b" if path.exists() else "w+b")  # noqa: SIM115
     try:
         _take_lock(handle)
     except OSError as exc:
@@ -86,7 +90,7 @@ def acquire(path: Path) -> None:
         ) from exc
 
     handle.seek(0)
-    handle.write(f"{os.getpid()}\n".encode("utf-8").ljust(64, b" "))
+    handle.write(f"{os.getpid()}\n".encode().ljust(64, b" "))
     handle.flush()
     _handle = handle
 
