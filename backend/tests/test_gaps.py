@@ -261,3 +261,78 @@ def test_a_figure_a_float_cannot_hold_survives_the_round_trip(scratch_books):
     # 4881.10 at 18%, halved, is 439.299 -> 439.30 exactly.
     assert summary.output_tax["cgst"] == "439.30"
     assert summary.output_tax["sgst"] == "439.30"
+
+
+# --------------------------------------------------------------------------- #
+# A5 - unhandled errors, and S4 - security headers
+#
+# These live behind a route that only runs when something has already gone
+# wrong, which is exactly why nothing exercised them: the first version of the
+# handler referred to JSONResponse without importing it, so the one thing
+# standing between a traceback and a browser would itself have raised
+# NameError. Importing the module could not catch that - the name only resolves
+# when the handler is called - so it has to be called.
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def client_with_a_broken_route():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    @app.get("/api/_test_explode")
+    def explode():
+        raise RuntimeError("a very specific internal detail")
+
+    # raise_server_exceptions=False makes the client behave like a browser:
+    # it returns the 500 the handler produced instead of re-raising.
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.router.routes[:] = [
+            r for r in app.router.routes
+            if getattr(r, "path", None) != "/api/_test_explode"
+        ]
+
+
+def test_an_unhandled_error_returns_a_reference_and_leaks_nothing(client_with_a_broken_route):
+    response = client_with_a_broken_route.get("/api/_test_explode")
+    assert response.status_code == 500
+
+    body = response.json()
+    assert "reference" in body and len(body["reference"]) == 8
+    assert body["reference"] in body["detail"]
+    # It must say the request did not complete - an accountant mid-filing needs
+    # to know whether their invoice posted.
+    assert "did not complete" in body["detail"]
+
+    # And it must not hand the internals of a tax system to the browser.
+    raw = response.text
+    assert "a very specific internal detail" not in raw
+    assert "Traceback" not in raw
+    assert "RuntimeError" not in raw
+
+
+def test_every_response_carries_the_security_headers(client_with_a_broken_route):
+    """Including the error path, which is the one most likely to be forgotten."""
+    for path in ("/api/health", "/api/_test_explode"):
+        headers = client_with_a_broken_route.get(path).headers
+        assert headers["X-Content-Type-Options"] == "nosniff"
+        assert headers["X-Frame-Options"] == "DENY"
+        assert headers["Referrer-Policy"] == "no-referrer"
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+        assert headers["Cache-Control"] == "no-store"
+
+
+def test_hsts_is_not_sent_over_plain_http(client_with_a_broken_route):
+    """Sent over http it is ignored anyway, and setting it while developing on
+    127.0.0.1 pins a localhost HSTS entry that breaks every other local project
+    until the user clears it by hand."""
+    assert "Strict-Transport-Security" not in client_with_a_broken_route.get("/api/health").headers
+
+
+def test_hsts_is_sent_when_a_proxy_reports_tls(client_with_a_broken_route):
+    headers = client_with_a_broken_route.get(
+        "/api/health", headers={"x-forwarded-proto": "https"}
+    ).headers
+    assert "max-age=31536000" in headers["Strict-Transport-Security"]

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import accounts, appsettings, auth, pipeline, runtime, singleton, store, workbook
+from . import accounts, appsettings, auth, db, pipeline, runtime, singleton, store, workbook
 from . import period as periods
 from .auth import require_admin, require_user
 from .config import (
@@ -60,11 +62,30 @@ async def lifespan(_app: FastAPI):
 
     workbook.ensure_working_copy(workbook.master_period())
     accounts.purge_expired()
+    accounts.prune_activity()
+    _recover_stranded_documents()
     _announce()
     try:
         yield
     finally:
         singleton.release()
+
+
+def _recover_stranded_documents() -> None:
+    """Read anything a restart caught mid-flight (gap A6).
+
+    Reading happens in a background task. If the process stops between staging
+    a document and reading it, nothing retried it and nothing noticed - the
+    document sat at `new` for ever while the Processing screen polled a stage
+    that would never advance. Picking them up at startup closes that entirely.
+    """
+    stranded = [d["id"] for d in store.all_documents()
+                if d.get("status") == DocStatus.NEW.value]
+    if not stranded:
+        return
+    log.warning("%d document(s) were left unread by a restart; reading them now.",
+                len(stranded))
+    threading.Thread(target=pipeline.process_many, args=(stranded,), daemon=True).start()
 
 
 def _announce() -> None:
@@ -107,6 +128,30 @@ app.add_middleware(
 # Security headers and unhandled errors (gaps S4, A5)
 # --------------------------------------------------------------------------- #
 
+def _apply_security_headers(headers, request: Request) -> None:
+    """The header policy, in one place.
+
+    Shared with the 500 handler deliberately. Starlette's ServerErrorMiddleware
+    sits OUTSIDE the user middleware stack, so an error response is returned
+    without ever passing back through the middleware below - which meant the
+    one response most worth locking down was the only one going out bare.
+    """
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "no-referrer")
+    headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
+    headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    )
+    if request.url.path.startswith("/api/"):
+        # Invoice data and session state must never sit in a shared cache.
+        headers.setdefault("Cache-Control", "no-store")
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     """The last line before a stack trace reaches a browser.
@@ -119,7 +164,7 @@ async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     """
     reference = uuid.uuid4().hex[:8]
     log.exception("unhandled error ref=%s %s %s", reference, request.method, request.url.path)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={
             "detail": (
@@ -129,6 +174,8 @@ async def unhandled(request: Request, exc: Exception) -> JSONResponse:
             "reference": reference,
         },
     )
+    _apply_security_headers(response.headers, request)
+    return response
 
 
 @app.middleware("http")
@@ -144,28 +191,64 @@ async def security_headers(request: Request, call_next):
     that then breaks every other local project until it is cleared by hand.
     """
     response = await call_next(request)
-    headers = response.headers
-    headers.setdefault("X-Content-Type-Options", "nosniff")
-    headers.setdefault("X-Frame-Options", "DENY")
-    headers.setdefault("Referrer-Policy", "no-referrer")
-    headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
-    headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
-    headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-    )
-    if request.url.path.startswith("/api/"):
-        # Invoice data and session state must never sit in a shared cache.
-        headers.setdefault("Cache-Control", "no-store")
-    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
-        headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    _apply_security_headers(response.headers, request)
     return response
 
 
 @app.get("/api/health")
 def health() -> dict:
-    """Liveness probe. Never requires credentials."""
+    """Liveness probe: is this process alive. Never requires credentials."""
     return {"status": "ok", "service": "gst-automation-backend"}
+
+
+@app.get("/api/ready")
+def ready() -> JSONResponse:
+    """Readiness: can this process actually do its job (gap O2).
+
+    Liveness answered "ok" throughout every real failure this system has had,
+    because the process was always running. This one touches the things that
+    have to work, and returns 503 when they do not, so a monitor watching it
+    reports a problem instead of a heartbeat.
+    """
+    checks: dict[str, dict] = {}
+
+    try:
+        with db.connect() as connection:
+            connection.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
+        checks["database"] = {"ok": True, "detail": str(db.path())}
+    except Exception as exc:
+        checks["database"] = {"ok": False, "detail": str(exc)}
+
+    try:
+        checks["master_workbook"] = {"ok": True, "detail": f"period {workbook.master_period()}"}
+    except Exception as exc:
+        checks["master_workbook"] = {"ok": False, "detail": str(exc)}
+
+    data_dir = Path(DATA_DIR)
+    checks["data_directory"] = {
+        "ok": data_dir.exists() and os.access(data_dir, os.W_OK),
+        "detail": str(data_dir),
+    }
+
+    # Not being able to reach the model is degraded, not down: the offline
+    # reader still captures documents, so this must not fail a health gate.
+    provider = extraction_provider()
+    last = runtime.last_read(provider, has_credentials())
+    fell_back = bool(last and last.get("reader") == "heuristic")
+    checks["reader"] = {
+        "ok": True,
+        "degraded": fell_back,
+        "detail": f"{provider}, credentials "
+                  f"{'present' if has_credentials() else 'absent'}"
+                  + (f"; last read fell back ({last.get('note') or 'no reason recorded'})"
+                     if fell_back else ""),
+    }
+
+    healthy = all(check["ok"] for check in checks.values())
+    return JSONResponse(
+        {"status": "ready" if healthy else "not ready", "checks": checks},
+        status_code=200 if healthy else 503,
+    )
 
 
 @app.get("/api/bootstrap")
@@ -357,6 +440,31 @@ def change_password(body: PasswordChange, request: Request,
     # so the person who just changed their password is not thrown out by it.
     token = accounts.open_session(user["id"], request.headers.get("User-Agent"))
     return {"changed": True, "token": token}
+
+
+@app.get("/api/auth/sessions")
+def my_sessions(request: Request, user: dict = Depends(require_user)) -> list[dict]:
+    """Where this account is signed in (gap S7).
+
+    Without this, a session on a device you no longer have could only be ended
+    by changing your password, which ends every session including the one you
+    are using.
+    """
+    if user.get("is_service"):
+        return []
+    return accounts.sessions_for(user["id"], auth.bearer_token(request))
+
+
+@app.delete("/api/auth/sessions/{session_id}")
+def revoke_my_session(session_id: str, user: dict = Depends(require_user)) -> dict:
+    if user.get("is_service"):
+        raise HTTPException(400, "The service key has no sessions.")
+    if not accounts.revoke_session(user["id"], session_id):
+        # Deliberately the same answer whether the session belongs to someone
+        # else or does not exist: neither is this caller's business.
+        raise HTTPException(404, "No such session.")
+    accounts.record(user, "session_revoked", {"session": session_id})
+    return {"revoked": session_id}
 
 
 @app.post("/api/auth/logout")
