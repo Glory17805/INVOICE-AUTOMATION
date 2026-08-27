@@ -1,0 +1,1019 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GST Automation Gap Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ---- Light palette: complete, on bare :root ------------------------- */
+  :root {
+    --paper:      #F4F5F8;
+    --surface:    #FFFFFF;
+    --surface-2:  #FAFAFC;
+    --ink:        #15171E;
+    --ink-2:      #454B5A;
+    --ink-3:      #6E7686;
+    --rule:       #D9DCE4;
+    --rule-soft:  #EAECF1;
+
+    --accent:     #3B3F7A;   /* indigo - the one bold colour */
+    --accent-ink: #262A57;
+    --accent-bg:  #E9EAF4;
+
+    --blocker:    #9E2A1B;
+    --blocker-bg: #F9E6E2;
+    --high:       #8A5A0B;
+    --high-bg:    #F7EFDC;
+    --medium:     #2F5E7A;
+    --medium-bg:  #E5EEF4;
+    --low:        #5C6472;
+    --low-bg:     #ECEEF2;
+    --solid:      #2C6349;
+    --solid-bg:   #E4EFE9;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0F1116;
+      --surface:    #171A21;
+      --surface-2:  #1C2028;
+      --ink:        #E6E9F0;
+      --ink-2:      #AEB5C4;
+      --ink-3:      #7B8394;
+      --rule:       #2B303A;
+      --rule-soft:  #21252D;
+
+      --accent:     #9AA0E0;
+      --accent-ink: #B9BEEC;
+      --accent-bg:  #1E2140;
+
+      --blocker:    #E8907C;
+      --blocker-bg: #3A1C16;
+      --high:       #D9AE5F;
+      --high-bg:    #332813;
+      --medium:     #7FB2CE;
+      --medium-bg:  #162833;
+      --low:        #99A1B0;
+      --low-bg:     #22262E;
+      --solid:      #7FBE9E;
+      --solid-bg:   #173025;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #0F1116;
+    --surface:    #171A21;
+    --surface-2:  #1C2028;
+    --ink:        #E6E9F0;
+    --ink-2:      #AEB5C4;
+    --ink-3:      #7B8394;
+    --rule:       #2B303A;
+    --rule-soft:  #21252D;
+
+    --accent:     #9AA0E0;
+    --accent-ink: #B9BEEC;
+    --accent-bg:  #1E2140;
+
+    --blocker:    #E8907C;
+    --blocker-bg: #3A1C16;
+    --high:       #D9AE5F;
+    --high-bg:    #332813;
+    --medium:     #7FB2CE;
+    --medium-bg:  #162833;
+    --low:        #99A1B0;
+    --low-bg:     #22262E;
+    --solid:      #7FBE9E;
+    --solid-bg:   #173025;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 16.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet { max-width: 1080px; margin: 0 auto; padding: 0 1.4rem 6rem; }
+
+  /* ---- Masthead ------------------------------------------------------- */
+  .masthead { padding: 3.5rem 0 1.5rem; border-bottom: 2px solid var(--ink); }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .69rem; font-weight: 500; letter-spacing: .17em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 .9rem;
+  }
+  h1 {
+    font-family: Archivo, sans-serif; font-weight: 700;
+    font-size: clamp(2rem, 5.5vw, 3.3rem); line-height: 1.03;
+    letter-spacing: -.028em; text-wrap: balance; margin: 0 0 1rem;
+  }
+  .standfirst { font-size: 1.1rem; color: var(--ink-2); max-width: 60ch; margin: 0 0 1.8rem; }
+  .facts {
+    display: flex; flex-wrap: wrap; gap: .45rem 2rem;
+    font-family: "IBM Plex Mono", monospace; font-size: .74rem; color: var(--ink-3);
+  }
+  .facts b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---- Severity tally ------------------------------------------------- */
+  .tally {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 1px; background: var(--rule); border-bottom: 1px solid var(--rule);
+    margin-bottom: 2.75rem;
+  }
+  .tally div { background: var(--paper); padding: 1.25rem 1.1rem 1.35rem; }
+  .tally .n {
+    display: block; font-family: Archivo, sans-serif; font-size: 2.3rem;
+    font-weight: 600; line-height: 1; letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .tally .l {
+    display: block; font-family: "IBM Plex Mono", monospace; font-size: .66rem;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-top: .5rem;
+  }
+  .tally .blocker .n { color: var(--blocker); }
+  .tally .high .n    { color: var(--high); }
+  .tally .medium .n  { color: var(--medium); }
+  .tally .low .n     { color: var(--low); }
+
+  /* ---- Sections ------------------------------------------------------- */
+  section { margin-bottom: 3.5rem; }
+  h2 {
+    font-family: Archivo, sans-serif; font-size: 1.45rem; font-weight: 600;
+    letter-spacing: -.017em; line-height: 1.2; margin: 0 0 .3rem;
+    padding-bottom: .65rem; border-bottom: 1px solid var(--ink);
+    display: flex; align-items: baseline; gap: .8rem;
+  }
+  h2 .num {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    font-weight: 600; color: var(--accent); letter-spacing: 0;
+  }
+  .section-note { color: var(--ink-3); font-size: .92rem; margin: .75rem 0 1.75rem; max-width: 62ch; }
+
+  /* ---- A gap ---------------------------------------------------------- */
+  .gap { border-top: 1px solid var(--rule); padding-top: 1.4rem; margin-top: 1.9rem; }
+  .gap:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+
+  .gap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .55rem; }
+  h3 {
+    font-family: Archivo, sans-serif; font-size: 1.08rem; font-weight: 600;
+    letter-spacing: -.01em; line-height: 1.3; margin: 0; flex: 1 1 20ch; text-wrap: balance;
+  }
+  h3 .ref {
+    font-family: "IBM Plex Mono", monospace; font-size: .75rem;
+    font-weight: 500; color: var(--ink-3); margin-right: .5rem;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: .62rem; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    padding: .28rem .55rem; border: 1px solid currentColor; white-space: nowrap; flex: none;
+  }
+  .chip.blocker { color: var(--blocker); background: var(--blocker-bg); }
+  .chip.high    { color: var(--high);    background: var(--high-bg); }
+  .chip.medium  { color: var(--medium);  background: var(--medium-bg); }
+  .chip.low     { color: var(--low);     background: var(--low-bg); }
+  .chip.solid   { color: var(--solid);   background: var(--solid-bg); }
+
+  p { margin: 0 0 .95rem; max-width: 70ch; }
+  .gap p:last-child { margin-bottom: 0; }
+  ul { margin: 0 0 .95rem; padding-left: 1.1rem; max-width: 70ch; }
+  li { margin-bottom: .4rem; }
+  li::marker { color: var(--ink-3); }
+  strong { font-weight: 600; }
+
+  code {
+    font-family: "IBM Plex Mono", monospace; font-size: .85em;
+    background: var(--rule-soft); padding: .1em .35em; border-radius: 2px; color: var(--ink);
+  }
+
+  /* Measured evidence, distinct from prose. */
+  .evidence {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem; line-height: 1.6;
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: .75rem .95rem; margin: 0 0 .95rem; overflow-x: auto; color: var(--ink-2);
+  }
+  .evidence .tag {
+    display: block; font-size: .62rem; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-3); margin-bottom: .35rem;
+  }
+
+  .fix {
+    border-left: 3px solid var(--rule); padding: .1rem 0 .1rem .9rem;
+    margin: .95rem 0 0; color: var(--ink-2); font-size: .93rem; max-width: 68ch;
+  }
+  .fix b {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); display: block; margin-bottom: .2rem;
+  }
+
+  /* ---- Tables --------------------------------------------------------- */
+  .table-wrap { overflow-x: auto; margin: 0 0 1.2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .86rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .55rem .85rem .55rem 0; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    border-bottom: 1px solid var(--ink); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  td.mono { font-family: "IBM Plex Mono", monospace; font-size: .8rem; }
+
+  /* ---- Priority list -------------------------------------------------- */
+  .queue { display: flex; flex-direction: column; }
+  .item {
+    display: grid; grid-template-columns: 2.6rem 1fr; gap: 0 1rem;
+    padding: 1.15rem 0; border-top: 1px solid var(--rule-soft);
+  }
+  .item:first-child { border-top: 1px solid var(--rule); }
+  .item .rank {
+    font-family: "IBM Plex Mono", monospace; font-size: .76rem;
+    font-weight: 600; color: var(--accent); padding-top: .15rem;
+  }
+  .item h3 { flex: none; margin-bottom: .3rem; }
+  .item p { font-size: .93rem; margin-bottom: 0; color: var(--ink-2); }
+
+  /* ---- Solid ---------------------------------------------------------- */
+  .solid-list { columns: 2; column-gap: 2.4rem; }
+  .solid-list li { break-inside: avoid; font-size: .92rem; color: var(--ink-2); }
+  @media (max-width: 680px) { .solid-list { columns: 1; } }
+
+  footer {
+    border-top: 2px solid var(--ink); padding-top: 1.3rem;
+    font-size: .87rem; color: var(--ink-3); max-width: 74ch;
+  }
+
+  @media (max-width: 700px) { body { font-size: 15.5px; } .masthead { padding-top: 2.25rem; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Ira Innovations &middot; GST Invoice Automation</p>
+    <h1>Gap Register</h1>
+    <p class="standfirst">
+      What is missing, at every level: the data layer, the API, access control, operations,
+      the browser, the GST domain itself, and the tests that should be catching all of it.
+    </p>
+    <div class="facts">
+      <span><b>26 August 2026</b></span>
+      <span>Commit <b>785bcd7</b></span>
+      <span>Backend <b>~4,200 lines</b></span>
+      <span>Frontend <b>~3,700 lines</b></span>
+      <span>Tests <b>214 passing</b></span>
+    </div>
+  </header>
+
+  <div class="tally">
+    <div class="blocker"><span class="n">4</span><span class="l">Blockers</span></div>
+    <div class="high"><span class="n">9</span><span class="l">High</span></div>
+    <div class="medium"><span class="n">10</span><span class="l">Medium</span></div>
+    <div class="low"><span class="n">6</span><span class="l">Low</span></div>
+  </div>
+
+  <p style="margin-top:-1.5rem;margin-bottom:2.75rem;color:var(--ink-2)">
+    <strong>Blocker</strong> means do not put a real client filing through this until it is
+    resolved. It does not mean the code is broken &mdash; the arithmetic is sound and well
+    tested. It means something outside the code would cause real harm: data going somewhere
+    it should not, or being lost with no way back.
+  </p>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">01</span> Data and correctness</h2>
+    <p class="section-note">
+      The workbook is the system of record. These are the ways it, or the trail proving it,
+      could be lost or wrong.
+    </p>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">D1</span>Nothing backs up the data directory</h3>
+        <span class="chip blocker">Blocker</span>
+      </div>
+      <p>
+        <code>backend/data/</code> holds the per-period workbooks, the SQLite queue, and
+        <code>archive/</code> &mdash; the archived originals that <em>are</em> the audit trail for
+        every posted row. It is gitignored, correctly, and nothing copies it anywhere.
+      </p>
+      <p>
+        The master workbook can re-seed structure. It cannot re-seed posted rows, and nothing
+        can re-seed the archived PDFs. A disk failure, a bad <code>Reset</code>, or a stray
+        <code>rm</code> takes the filing evidence with it.
+      </p>
+      <div class="fix"><b>Fix</b>
+        A scheduled copy of <code>data/workbook/</code> and <code>data/archive/</code> to
+        anywhere else. Half an hour of work; the cheapest item on this list by a wide margin.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">D2</span>Money crosses the wire as floating point</h3>
+        <span class="chip high">High</span>
+      </div>
+      <p>
+        Internally the tax arithmetic uses <code>Decimal</code> and is correct. But every amount
+        entering and leaving the API is a <code>float</code> &mdash; the extraction schema, the
+        JSON responses, and the values written into the workbook.
+      </p>
+      <div class="evidence"><span class="tag">app/models.py</span>taxable_value: Optional[float]
+cgst_amount:   Optional[float]
+igst_amount:   Optional[float]</div>
+      <p>
+        Binary floating point cannot represent 0.1 exactly. Today the quantisation to two
+        decimals hides it. At scale, in a system whose whole job is producing figures that
+        reconcile to the rupee, this is the wrong representation to be carrying.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Strings or integer paise on the wire, <code>Decimal</code> throughout. Contained but
+        touches the schema, so it wants doing before there is a second consumer of this API.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">D3</span>One writer, enforced but not solved</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        A second backend against the same data directory refuses to start, and that guard has
+        already fired twice in practice. But it converts a corruption risk into an availability
+        limit rather than removing it: this cannot serve two concurrent users safely, and
+        <code>--workers</code> is permanently off the table.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Move workbook writes behind a single queue consumer. Not needed yet. The constraint
+        should be understood before anyone reaches for more processes.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">D4</span>The activity log grows without limit</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        <code>sessions</code> and <code>password_resets</code> are purged at startup.
+        <code>activity</code> never is &mdash; by design, it is an audit trail. But an audit
+        trail with no retention policy is one nobody has decided about, and it shares a database
+        with the working queue.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Decide a retention period, export older entries, prune. A compliance decision more than
+        a technical one.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">D5</span>openpyxl does not round-trip charts or pivot tables</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        Reading and re-saving the workbook preserves formulas and values, not charts or pivots.
+        The May-26 workbook has neither, so nothing is lost today. It would be lost silently the
+        first time someone adds one.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">02</span> The API</h2>
+    <p class="section-note">
+      35 endpoints, all reachable, all guarded. The gaps are in shape rather than in coverage.
+    </p>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A1</span>Every response is an untyped dictionary</h3>
+        <span class="chip high">High</span>
+      </div>
+      <div class="evidence"><span class="tag">measured</span>response_model= declarations : 0
+handlers returning bare dict : 35</div>
+      <p>
+        FastAPI generates its schema from return types. With every handler annotated
+        <code>-&gt; dict</code>, <code>/openapi.json</code> describes the paths and the query
+        parameters but says nothing about what comes back. The generated docs are half a
+        contract.
+      </p>
+      <p>
+        This is not theoretical: a change to <code>/api/documents</code> shipped a response shape
+        the page could not consume, and the failure surfaced as
+        <code>state.documents is not iterable</code> in a user's browser. Response models would
+        have made that a schema change rather than a surprise.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Pydantic response models on each route. Mechanical, and it makes the interactive docs
+        genuinely usable.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A2</span>The whole queue is loaded and parsed on most requests</h3>
+        <span class="chip high">High</span>
+      </div>
+      <div class="evidence"><span class="tag">measured against a real 357-document queue</span>357 documents, 0.7 MB of JSON, parsed in 39 ms
+call sites of store.all_documents() : 9
+extrapolated to 5,000 documents     : ~553 ms per call</div>
+      <p>
+        <code>/api/info</code>, <code>/api/dashboard</code>, <code>/api/documents</code>,
+        <code>/api/admin/stats</code>, the duplicate hash check and the queue-twin check all call
+        <code>store.all_documents()</code>, which reads and JSON-decodes every row. Loading the
+        Dashboard does it more than once. Uploading does it per file, then again per invoice read.
+      </p>
+      <p>
+        A single client filing a few hundred invoices a month reaches thousands of rows within a
+        year, at which point every screen carries a half-second of avoidable work.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Push filtering and counting into SQL. The indexes on <code>status</code> and
+        <code>period</code> already exist and are unused by these paths.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A3</span>No real pagination</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        <code>/api/documents</code> takes <code>limit</code> (capped at 1000) and no offset or
+        cursor. Past a thousand documents the History screen simply cannot reach the rest, and
+        nothing in the response says so &mdash; <code>total</code> and the returned count just
+        disagree.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Cursor pagination on <code>received_at</code>, and a <code>has_more</code> flag the page
+        can act on.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A4</span>No API version in the path</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        Routes are <code>/api/&hellip;</code>. There is one consumer today, so breaking changes
+        are survivable &mdash; but the shape has already broken once, and the next consumer will
+        be somebody's script.
+      </p>
+      <div class="fix"><b>Fix</b> <code>/api/v1/</code> now, while it costs a search and replace.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A5</span>No global exception handler and no request logging</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <div class="evidence"><span class="tag">measured</span>exception_handler registrations : 0
+log statements in main.py       : 5 (all at startup)</div>
+      <p>
+        An unhandled exception returns FastAPI's default 500 with no correlation id, and the
+        traceback goes to a console nobody is reading. There is no way to connect a user saying
+        "it broke" to the event that broke.
+      </p>
+      <div class="fix"><b>Fix</b>
+        A handler that logs with a request id and returns that id to the caller. Structured
+        logging so the output is greppable.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">A6</span>Background work is fire-and-forget</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        Reading happens in a FastAPI <code>BackgroundTask</code>. If the process restarts
+        mid-batch, those documents stay at <code>new</code> for ever &mdash; nothing retries them
+        and nothing notices. The Processing screen would poll a stage that never advances until
+        its own fifteen-minute ceiling.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Re-queue anything left in <code>new</code> at startup. Small, and it closes the whole
+        failure mode.
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">03</span> Security and access</h2>
+    <p class="section-note">
+      Authentication is real and reasonably built. What surrounds it is not yet finished.
+    </p>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S1</span>Client invoices may be training a third-party model</h3>
+        <span class="chip blocker">Blocker</span>
+      </div>
+      <p>
+        Extraction runs on Gemini's free tier, where Google may use inputs to improve their
+        models. The inputs here are a real company's invoices: named counterparties, GSTINs,
+        amounts, addresses.
+      </p>
+      <p>
+        The application warns about this on every screen and the warning cannot be dismissed,
+        which is the right behaviour &mdash; but a warning is not a control.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Enable billing on the key and set <code>GST_GEMINI_TIER=paid</code>, or supply a funded
+        Anthropic key and switch provider. A one-line change either way; the decision is
+        commercial, not technical.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S2</span>No TLS</h3>
+        <span class="chip blocker">Blocker</span>
+      </div>
+      <p>
+        Session tokens travel in an <code>Authorization</code> header on every request, and
+        invoices travel in responses, all in clear text. On one machine that is fine. The moment
+        this is reachable across a network it is a credential and a document set on the wire.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Terminate TLS at a reverse proxy. Do not attempt it in the application.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S3</span>Signup is currently open to anyone who reaches the page</h3>
+        <span class="chip blocker">Blocker</span>
+      </div>
+      <div class="evidence"><span class="tag">live, at time of writing</span>GET /api/bootstrap -> {"signup_mode": "open", ...}</div>
+      <p>
+        The setting ships as <code>approval</code>, where an administrator lets people in. It is
+        currently <code>open</code>: anyone who can load the sign-in page can create a working
+        account and read every invoice, every register and the whole workbook, with nobody
+        approving anything.
+      </p>
+      <p>
+        On localhost that is harmless. Combined with S2 it is the single most exposed thing here.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Settings &rarr; Who can create an account &rarr; back to approval. One click.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S4</span>No security headers on either server</h3>
+        <span class="chip high">High</span>
+      </div>
+      <div class="evidence"><span class="tag">measured</span>backend  : 0 references to CSP / X-Content-Type-Options / HSTS / X-Frame-Options
+frontend : 0 references</div>
+      <p>
+        No Content-Security-Policy in particular. The session token lives in
+        <code>localStorage</code>, so any successful script injection hands over an account. The
+        page builds its DOM with <code>textContent</code> throughout, which is why no injection
+        exists today &mdash; but that is a property of current code, not an enforced boundary.
+      </p>
+      <div class="fix"><b>Fix</b>
+        CSP, <code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: DENY</code>,
+        <code>Referrer-Policy</code>. A dozen lines in the frontend handler.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S5</span>Login throttling is in memory only</h3>
+        <span class="chip high">High</span>
+      </div>
+      <div class="evidence"><span class="tag">app/auth.py</span>_attempts: dict[str, list[float]] = {}</div>
+      <p>
+        Five failures start a backoff that doubles to fifteen minutes. It lives in a process
+        dictionary, so a restart clears every counter &mdash; and the backend restarts often.
+        Nothing else on the API is rate-limited at all.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Persist the counters in the database, and add a blanket per-address limit in front of the
+        whole API.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S6</span>Uploads are trusted on their file extension</h3>
+        <span class="chip high">High</span>
+      </div>
+      <p>
+        The only check is that the suffix is in a list. Nothing looks at the bytes. A file named
+        <code>.pdf</code> containing anything at all is stored, handed to <code>pypdf</code>, and
+        &mdash; for a real client &mdash; forwarded to a third-party model.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Sniff the magic bytes and reject a mismatch. Consider a size-per-user quota; there is
+        currently a per-file cap and no total.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S7</span>Sessions never extend, and cannot be listed or revoked</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        Seven days from issue, fixed. Someone working daily is signed out mid-week with no
+        warning. There is also no way to see your active sessions or end one on a device you no
+        longer have &mdash; changing your password is the only lever, and it ends all of them.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Slide the expiry on use, and a sessions list on the profile screen with a revoke button.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S8</span>Secrets sit in plaintext</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        <code>backend/.env</code> holds the provider key and any service key, unencrypted, beside
+        the code. Correctly gitignored. Acceptable on one trusted machine; not on a shared server.
+      </p>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">S9</span>Password reset depends on someone reading a log</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        No mail server is configured, so a reset link is written to the backend log and an
+        administrator can generate one from the Admin screen. The security design is right &mdash;
+        the anonymous route never returns the token, and answers identically for unknown
+        addresses. The delivery is a manual step nobody will remember at the moment they need it.
+      </p>
+      <div class="fix"><b>Fix</b> SMTP, once a sending mailbox exists.</div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">04</span> Operations</h2>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">O1</span>No continuous integration, linting or type checking</h3>
+        <span class="chip high">High</span>
+      </div>
+      <div class="evidence"><span class="tag">measured</span>.github/  ruff.toml  pyproject.toml  mypy.ini  .pre-commit-config.yaml
+all absent</div>
+      <p>
+        214 tests exist and run when somebody remembers. Nothing runs them on a change. This is
+        the class of gap that let a README full of real control bytes be committed unnoticed, and
+        that let three tests quietly make live API calls and write to the production database for
+        as long as they did.
+      </p>
+      <div class="fix"><b>Fix</b>
+        A workflow that runs the suite, <code>ruff</code>, and the contract checker. The single
+        highest-leverage item in this section.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">O2</span>Health check does not check anything</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        <code>/api/health</code> returns <code>ok</code> if the process is running. It does not
+        touch the database, confirm the master workbook is readable, or report whether the
+        configured reader can be reached. A monitor watching it would have seen green throughout
+        every failure in this document.
+      </p>
+      <div class="fix"><b>Fix</b>
+        A readiness check that opens the database, stats the master workbook, and reports the
+        effective reader &mdash; separate from liveness.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">O3</span>Both servers are development servers</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        The frontend is Python's <code>ThreadingHTTPServer</code> &mdash; adequate, and only after
+        a fix for a single-threaded stall that made the app look broken. Neither process has a
+        supervisor: nothing restarts them on failure or on boot, which is why "is it still
+        running?" has been a recurring question.
+      </p>
+      <div class="fix"><b>Fix</b>
+        nginx or Caddy for the static files, and a service manager for the API. TLS lands in the
+        same change.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">O4</span>The archive grows unbounded</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        Every posted row copies its original into <code>data/archive/</code> and nothing prunes it.
+        Correct for an audit trail; worth a retention decision alongside D4, and it makes D1 more
+        pressing rather than less.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">05</span> The browser</h2>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">F1</span>2,591 lines of JavaScript with no tests at all</h3>
+        <span class="chip high">High</span>
+      </div>
+      <p>
+        Every one of the 214 tests is backend. The interface is verified by hand, plus a static
+        check that each element the script reaches for exists and each route has a renderer.
+      </p>
+      <p>
+        Three separate bugs reached the user through exactly this gap: a response shape the page
+        could not consume, a stalled asset that rendered as an empty sign-in card, and a stale
+        banner contradicting the one beside it. None was reachable from the backend suite.
+      </p>
+      <div class="fix"><b>Fix</b>
+        Browser-driven tests over the real journeys &mdash; sign in, upload, review, post. The
+        contract checker in <code>backend/tools/</code> covers API shape only.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">F2</span>Progress is polled, once a second, per document</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        The Processing screen polls each document's progress every second for up to ten minutes.
+        For an eighteen-invoice print run that is eighteen requests a second, each one loading and
+        parsing the queue (see A2). It works, and it scales badly in exactly the case it exists for.
+      </p>
+      <div class="fix"><b>Fix</b>
+        One batch progress endpoint, or server-sent events.
+      </div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">F3</span>No accessibility pass</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        Status is never carried by colour alone &mdash; every pill pairs a colour with an icon and
+        a word, which is the hard part and it was done. But nothing has been checked with a screen
+        reader, there is no skip link, dynamic regions are not announced, and focus is not managed
+        when a screen swaps.
+      </p>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">F4</span>Confirmations use native dialogs</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        Posting an override, deleting a person, and copying a reset link all use
+        <code>confirm()</code> and <code>prompt()</code>. They block the page, cannot be styled,
+        and the reset link in particular deserves better than a browser prompt box.
+      </p>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">F5</span>No build step</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        Deliberate, and mostly a virtue: no toolchain to maintain, nothing to go stale. The cost is
+        no minification, no cache-busting on deploy, and one 2,591-line file. Worth revisiting only
+        if the file keeps growing.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">06</span> The GST domain</h2>
+    <p class="section-note">
+      What the system models today is the four registers in the client's workbook, done carefully.
+      These are real filing situations it has no representation for &mdash; each would produce a
+      wrong row rather than an error.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Not modelled</th><th>What happens today</th><th>Severity</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Exports, SEZ supplies, supplies under LUT</td>
+            <td class="mono">Treated as ordinary inter-state IGST. Zero-rated supply has no representation.</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>Nil-rated, exempt and non-GST supplies</td>
+            <td class="mono">A zero rate reads as a missing rate and blocks the document.</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>Credit note linked to its original invoice</td>
+            <td class="mono">Notes are posted standalone; GSTR-1 wants the original reference.</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>Multiple tax rates on one invoice</td>
+            <td class="mono">A single rate per document. A mixed-rate invoice reconciles wrongly.</td>
+            <td>High</td>
+          </tr>
+          <tr>
+            <td>e-invoice IRN and QR</td>
+            <td class="mono">Not extracted or stored. Mandatory above the turnover threshold.</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>Amendments (B2BA, CDNA)</td>
+            <td class="mono">No concept of amending a filed row. Un-post and re-post is not an amendment.</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>Advances and their adjustment</td>
+            <td class="mono">Not represented.</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>HSN-wise summary</td>
+            <td class="mono">One HSN per document; GSTR-1 requires an HSN summary table.</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>TDS / TCS</td>
+            <td class="mono">Not represented.</td>
+            <td>Low</td>
+          </tr>
+          <tr>
+            <td>Import of goods and services</td>
+            <td class="mono">Bill of entry has no place; RCM on imported services is not distinguished.</td>
+            <td>Low</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">G1</span>The GSTR-1 reconciliation block covers only rows 8&ndash;50</h3>
+        <span class="chip high">High</span>
+      </div>
+      <p>
+        Rows 75&ndash;80 of the client's own sheet are built from a hand-written list of references
+        covering rows 8 to 50. Rows 51&ndash;71 fall outside it. This is pre-existing in the
+        workbook and it is their tax logic, so the application deliberately does not rewrite it.
+      </p>
+      <p>
+        It needs a decision before the register grows past row 50 in a live month, and the
+        application will not warn when that happens.
+      </p>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">G2</span>Opening credit is not carried forward</h3>
+        <span class="chip medium">Medium</span>
+      </div>
+      <p>
+        A new period starts with input-credit carry-forward at zero and the screen says so. The
+        correct figure is the previous return's closing balance, which the application already
+        holds once that period exists. Today it is typed in by hand, or forgotten.
+      </p>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <h3><span class="ref">G3</span>Single tenant</h3>
+        <span class="chip low">Low</span>
+      </div>
+      <p>
+        The company profile is a constant in <code>config.py</code>. Every classification decision
+        is made relative to it. If this workbook format is reused across clients, that becomes
+        per-tenant configuration and touches the data model, not just a setting.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">07</span> What to do next</h2>
+    <p class="section-note">Ordered by consequence, not effort.</p>
+
+    <div class="queue">
+      <div class="item">
+        <span class="rank">01</span>
+        <div>
+          <h3>Close the three blockers you can close today</h3>
+          <p>Set signup back to approval (one click). Back up <code>data/</code> (half an hour).
+             Resolve the Gemini tier &mdash; enable billing or switch provider (one line). None
+             needs a code change from me.</p>
+        </div>
+      </div>
+      <div class="item">
+        <span class="rank">02</span>
+        <div>
+          <h3>Continuous integration</h3>
+          <p>Everything below this line is easier to do safely once a change runs 214 tests and
+             the contract checker automatically. It is also the gap that let several of the
+             others survive unnoticed.</p>
+        </div>
+      </div>
+      <div class="item">
+        <span class="rank">03</span>
+        <div>
+          <h3>Typed responses and SQL-side filtering</h3>
+          <p>A1 and A2 together. Response models make the contract enforceable; moving filtering
+             into SQL removes the half-second that is coming. Both are mechanical.</p>
+        </div>
+      </div>
+      <div class="item">
+        <span class="rank">04</span>
+        <div>
+          <h3>Deploy properly, once</h3>
+          <p>Reverse proxy, TLS, security headers, a service manager, persistent rate limiting.
+             S2, S4, S5 and O3 are one afternoon if done together and four separate jobs if not.</p>
+        </div>
+      </div>
+      <div class="item">
+        <span class="rank">05</span>
+        <div>
+          <h3>Decide the GST scope</h3>
+          <p>The domain table is the one part of this that is a product question rather than an
+             engineering one. Zero-rated supplies, mixed rates and credit-note linkage are the
+             three that would produce a wrong filing rather than a missing feature &mdash; worth
+             confirming against what this client actually issues.</p>
+        </div>
+      </div>
+      <div class="item">
+        <span class="rank">06</span>
+        <div>
+          <h3>Browser tests</h3>
+          <p>Three user-visible bugs came through F1. The backend suite cannot see that class at
+             all, and hand-checking has already proved unreliable.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">08</span> What is already solid</h2>
+    <p class="section-note">
+      A register of gaps reads worse than the system is. For balance, these were checked and hold.
+    </p>
+    <ul class="solid-list">
+      <li><strong>The tax arithmetic.</strong> Pinned against the client's own figures &mdash; &#8377;439.30 CGST/SGST, &#8377;1,080 IGST on the Waymiro bill, the &#8377;6,16,509 opening credit.</li>
+      <li><strong>The source workbook is never written to.</strong> Each period is copied from the master; only the copy is appended.</li>
+      <li><strong>Posted rows carry the sheet's own formulas</strong>, so they recalculate in Excel like a row a person typed.</li>
+      <li><strong>Registers grow correctly</strong> past their template rows, with SUM ranges rewritten and Tax Payable references repointed.</li>
+      <li><strong>Duplicates are caught by reading the register back</strong>, not by trusting the queue &mdash; and now at upload time too.</li>
+      <li><strong>A print run splits by invoice number, not page count</strong>, so an invoice spilling onto a second page stays whole.</li>
+      <li><strong>Passwords are scrypt-hashed; only session token hashes are stored.</strong> A stolen database is not a set of live sessions.</li>
+      <li><strong>Every route states its own guard</strong>, and administrator actions are separated from user ones.</li>
+      <li><strong>The audit trail names who posted each row</strong>, including who overrode a failed check.</li>
+      <li><strong>The reader reports what actually ran</strong>, not what was configured &mdash; and stops reporting it when the configuration changes.</li>
+      <li><strong>Two backends cannot share a data directory.</strong> Enforced by the OS, and it has fired twice for real.</li>
+      <li><strong>Register reads are cached on the workbook's mtime</strong>, so a row typed in Excel still appears.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Every measurement in this document was taken from the running system or the real data, not
+    estimated: queue parse timings against a 357-document database, endpoint and guard counts from
+    the source, header and configuration checks against the live servers. Two things were not
+    assessed: the extraction accuracy of the Gemini reader against a broad sample of vendor
+    layouts, and the interface under a screen reader.
+  </footer>
+
+</div>
+</body>
+</html>

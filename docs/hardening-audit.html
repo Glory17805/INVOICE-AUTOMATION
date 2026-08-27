@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GST Automation Hardening Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ---- Light palette: complete, on bare :root ------------------------- */
+  :root {
+    --paper:      #F5F6F8;
+    --surface:    #FFFFFF;
+    --ink:        #161A21;
+    --ink-2:      #414A57;
+    --ink-3:      #6B7684;
+    --rule:       #D8DDE4;
+    --rule-soft:  #E8ECF1;
+
+    --accent:     #1B4E5C;   /* petrol - the one bold colour */
+    --accent-ink: #10333D;
+    --accent-bg:  #E4EEF0;
+
+    --critical:   #A03019;   /* ledger red */
+    --critical-bg:#F8E7E2;
+    --good:       #2C6349;
+    --good-bg:    #E3EFE8;
+    --warn-ink:   #7A5A0E;
+    --warn-bg:    #F6EEDB;
+
+    --shadow:     0 1px 2px rgba(22,26,33,.05), 0 6px 20px rgba(22,26,33,.05);
+  }
+
+  /* ---- Dark: token overrides only, three states handled --------------- */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #10141A;
+      --surface:    #171C24;
+      --ink:        #E7EBF0;
+      --ink-2:      #AFB9C6;
+      --ink-3:      #7D8896;
+      --rule:       #2C333D;
+      --rule-soft:  #222831;
+
+      --accent:     #6FB6C4;
+      --accent-ink: #A8D6DF;
+      --accent-bg:  #16323A;
+
+      --critical:   #E58A72;
+      --critical-bg:#3A1E17;
+      --good:       #7FBE9E;
+      --good-bg:    #173025;
+      --warn-ink:   #D9B45F;
+      --warn-bg:    #322813;
+
+      --shadow:     0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #10141A;
+    --surface:    #171C24;
+    --ink:        #E7EBF0;
+    --ink-2:      #AFB9C6;
+    --ink-3:      #7D8896;
+    --rule:       #2C333D;
+    --rule-soft:  #222831;
+
+    --accent:     #6FB6C4;
+    --accent-ink: #A8D6DF;
+    --accent-bg:  #16323A;
+
+    --critical:   #E58A72;
+    --critical-bg:#3A1E17;
+    --good:       #7FBE9E;
+    --good-bg:    #173025;
+    --warn-ink:   #D9B45F;
+    --warn-bg:    #322813;
+
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  /* ---- Masthead ------------------------------------------------------- */
+  .masthead {
+    padding: 4rem 0 1.75rem;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .7rem;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1rem;
+  }
+  h1 {
+    font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5.5vw, 3.4rem);
+    line-height: 1.04;
+    letter-spacing: -.025em;
+    text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+  .standfirst {
+    font-size: 1.14rem;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0 0 2rem;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 2.25rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .76rem;
+    color: var(--ink-3);
+  }
+  .facts b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---- Position strip: the audit's balance ---------------------------- */
+  .position {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 3.5rem;
+  }
+  .position div {
+    background: var(--paper);
+    padding: 1.4rem 1.25rem 1.5rem;
+  }
+  .position .n {
+    font-family: Archivo, sans-serif;
+    font-size: 2.5rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+    display: block;
+  }
+  .position .l {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-top: .55rem;
+    display: block;
+  }
+  .position .fixed  .n { color: var(--good); }
+  .position .closed .n { color: var(--accent); }
+  .position .perf   .n { color: var(--ink); }
+  .position .ahead  .n { color: var(--warn-ink); }
+
+  /* ---- Sections ------------------------------------------------------- */
+  section { margin-bottom: 3.75rem; }
+
+  h2 {
+    font-family: Archivo, sans-serif;
+    font-size: 1.55rem;
+    font-weight: 600;
+    letter-spacing: -.016em;
+    line-height: 1.2;
+    margin: 0 0 .35rem;
+    padding-bottom: .7rem;
+    border-bottom: 1px solid var(--ink);
+    display: flex;
+    align-items: baseline;
+    gap: .85rem;
+  }
+  h2 .num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .8rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0;
+  }
+  .section-note {
+    color: var(--ink-3);
+    font-size: .93rem;
+    margin: .8rem 0 2rem;
+    max-width: 62ch;
+  }
+
+  /* ---- Finding: ruled, not boxed -------------------------------------- */
+  .finding {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.6rem;
+    margin-top: 2.25rem;
+  }
+  .finding:first-of-type { border-top: none; padding-top: 0; }
+
+  .finding-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .7rem;
+    margin-bottom: .3rem;
+  }
+  h3 {
+    font-family: Archivo, sans-serif;
+    font-size: 1.12rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.3;
+    margin: 0;
+    flex: 1 1 22ch;
+    text-wrap: balance;
+  }
+  h3 .ref {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .78rem;
+    font-weight: 500;
+    color: var(--ink-3);
+    margin-right: .55rem;
+  }
+
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .64rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: .3rem .6rem;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+    flex: none;
+  }
+  .chip.fixed    { color: var(--good);     background: var(--good-bg); }
+  .chip.closed   { color: var(--accent);   background: var(--accent-bg); }
+  .chip.live     { color: var(--critical); background: var(--critical-bg); }
+  .chip.ahead    { color: var(--warn-ink); background: var(--warn-bg); }
+
+  .sev {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem;
+    color: var(--ink-3);
+    letter-spacing: .04em;
+    margin: 0 0 .9rem;
+  }
+  .sev b { color: var(--critical); font-weight: 600; }
+  .sev.med b { color: var(--warn-ink); }
+
+  p { margin: 0 0 1.05rem; max-width: 68ch; }
+  .finding p:last-child, section > p:last-child { margin-bottom: 0; }
+
+  ul { margin: 0 0 1.05rem; padding-left: 1.15rem; max-width: 68ch; }
+  li { margin-bottom: .5rem; }
+  li::marker { color: var(--ink-3); }
+
+  strong { font-weight: 600; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .855em;
+    background: var(--rule-soft);
+    padding: .12em .38em;
+    color: var(--ink);
+    border-radius: 2px;
+  }
+
+  pre {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .8rem;
+    line-height: 1.65;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    margin: 0 0 1.15rem;
+    color: var(--ink-2);
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+
+  /* ---- Tables: ledger ruling, not cards ------------------------------- */
+  .table-wrap { overflow-x: auto; margin: 0 0 1.35rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .88rem;
+    font-variant-numeric: tabular-nums;
+  }
+  caption {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: .6rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .62rem .9rem .62rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    border-bottom: 1px solid var(--ink);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  td.num { font-family: "IBM Plex Mono", monospace; text-align: right; padding-right: 1.4rem; white-space: nowrap; }
+  th.num { text-align: right; padding-right: 1.4rem; }
+  .row-bad  td { color: var(--critical); }
+  .row-bad  td:first-child { font-weight: 600; }
+  .wrong { font-weight: 600; }
+  .ok { color: var(--good); font-weight: 600; }
+
+  /* ---- Callout -------------------------------------------------------- */
+  .callout {
+    border: 1px solid var(--critical);
+    background: var(--critical-bg);
+    padding: 1.25rem 1.4rem;
+    margin: 0 0 3.5rem;
+  }
+  .callout .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .66rem;
+    font-weight: 600;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--critical);
+    display: block;
+    margin-bottom: .55rem;
+  }
+  .callout p { margin: 0; color: var(--ink); font-size: .96rem; max-width: 74ch; }
+  .callout p + p { margin-top: .7rem; }
+
+  /* ---- Future work list ----------------------------------------------- */
+  .queue { display: flex; flex-direction: column; gap: 0; }
+  .item {
+    display: grid;
+    grid-template-columns: 3.2rem 1fr;
+    gap: 0 1.1rem;
+    padding: 1.35rem 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .item:first-child { border-top: 1px solid var(--rule); }
+  .item .rank {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .78rem;
+    font-weight: 600;
+    color: var(--accent);
+    padding-top: .18rem;
+  }
+  .item h3 { margin-bottom: .45rem; flex: none; }
+  .item p { font-size: .95rem; margin-bottom: 0; color: var(--ink-2); }
+  .item p + p { margin-top: .65rem; }
+
+  .minor { columns: 2; column-gap: 2.5rem; }
+  .minor li { break-inside: avoid; font-size: .93rem; color: var(--ink-2); }
+  @media (max-width: 640px) { .minor { columns: 1; } }
+
+  footer {
+    border-top: 2px solid var(--ink);
+    padding-top: 1.5rem;
+    font-size: .87rem;
+    color: var(--ink-3);
+    max-width: 74ch;
+  }
+
+  @media (max-width: 700px) {
+    body { font-size: 16px; }
+    .masthead { padding-top: 2.5rem; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Ira Innovations &middot; Engineering review</p>
+    <h1>GST Automation Hardening Audit</h1>
+    <p class="standfirst">
+      A review of the invoice-to-register pipeline after the multi-period refactor and the
+      backend/frontend split &mdash; what was wrong, what was closed, and what is still ahead.
+    </p>
+    <div class="facts">
+      <span><b>26 August 2026</b></span>
+      <span>Scope <b>backend + frontend</b></span>
+      <span>Commits <b>c59f3d4 &rarr; 7442371</b></span>
+      <span>Tests <b>104 &rarr; 135 passing</b></span>
+    </div>
+  </header>
+
+  <div class="position">
+    <div class="fixed"><span class="n">4</span><span class="l">Defects fixed</span></div>
+    <div class="closed"><span class="n">6</span><span class="l">Gaps closed</span></div>
+    <div class="perf"><span class="n">3</span><span class="l">Optimisations</span></div>
+    <div class="ahead"><span class="n">10</span><span class="l">Items ahead</span></div>
+  </div>
+
+  <div class="callout">
+    <span class="tag">Needs your action &mdash; not a code issue</span>
+    <p>
+      The Anthropic account currently returns <em>credit balance too low</em>, so <strong>every invoice
+      is being read by the offline parser right now</strong>. That parser cannot read scans or photographs
+      at all, and gives text-layer PDFs a simpler read worth checking.
+    </p>
+    <p>
+      The application handles this correctly and now says so plainly on screen. But the system is running
+      in its degraded mode until the account is topped up, and no change to the code will alter that.
+    </p>
+  </div>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">01</span> Defects found and fixed</h2>
+    <p class="section-note">
+      Two were live in the product. One made the documentation unusable. One removed a working feature.
+      Nothing in the GST arithmetic was altered &mdash; every figure the suite pins against the client's
+      own workbook is unchanged.
+    </p>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">1.1</span>Output tax overstated on hand-typed inter-state sales</h3>
+        <span class="chip fixed">Fixed</span>
+      </div>
+      <p class="sev">Severity <b>High</b> &mdash; wrong tax figures on a screen an accountant reads and files from.</p>
+
+      <p>
+        <code>_gstr1_amounts</code> re-derives amounts from rows already sitting in GSTR&#8209;1. It inferred
+        the entire CGST/SGST-vs-IGST split from whether column&nbsp;K held a <em>formula</em> or a
+        <em>literal number</em>:
+      </p>
+      <pre><code>if _is_formula(igst_raw):   igst = taxable * rate;  cgst = sgst = 0
+else:                       igst = number(K);       cgst = sgst = taxable * rate / 2</code></pre>
+      <p>
+        Rows this application posts always carry formulas, so the literal branch was never exercised by a
+        test. But the client has kept these sheets by hand for years and will keep doing so alongside the
+        app &mdash; and a row typed into Excel carries plain numbers, not formulas.
+      </p>
+      <p>
+        Reproduced against a copy of the real May&#8209;26 workbook. An inter-state sale, taxable
+        &#8377;10,000 at 18%, IGST &#8377;1,800 typed into K, with L and M left blank:
+      </p>
+      <div class="table-wrap">
+        <table>
+          <caption>What the sheet says vs. what the app read</caption>
+          <thead>
+            <tr><th>Source</th><th class="num">IGST</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">Total</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>On the sheet</td><td class="num">1,800.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">11,800.00</td></tr>
+            <tr class="row-bad"><td>Read back as</td><td class="num">1,800.00</td><td class="num wrong">900.00</td><td class="num wrong">900.00</td><td class="num wrong">13,600.00</td></tr>
+            <tr><td>After the fix</td><td class="num">1,800.00</td><td class="num ok">0.00</td><td class="num ok">0.00</td><td class="num ok">11,800.00</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        It invented &#8377;1,800 of tax that is not on the sheet. Because the tax position sums GSTR&#8209;1
+        through the same function, the error reached the Tax position screen as well as the Registers display.
+      </p>
+      <p>
+        <strong>The fix.</strong> K, L and M are each evaluated on their own terms &mdash; resolving the
+        sheet's own idioms (<code>=I*J</code>, <code>=J*I/2</code>, <code>=L{row}</code>) and taking literals
+        at face value. Template rows and posted rows evaluate exactly as before, so every pinned figure holds.
+        Four regression tests cover the hand-typed inter-state case, the hand-typed intra-state case, both
+        formula idioms, and an unrecognisable formula, which scores zero rather than guessing.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">1.2</span>The header claimed Claude was reading when it was not</h3>
+        <span class="chip fixed">Fixed</span>
+      </div>
+      <p class="sev med">Severity <b>Medium</b> &mdash; silently misrepresents how the work was done.</p>
+      <p>
+        The API reported the <em>configured</em> reader: holding an API key made the header say
+        &ldquo;Claude reader&rdquo; regardless of whether Claude ever answered. Found live &mdash; the key
+        returns <code>HTTP 400, credit balance too low</code>, the offline fallback correctly took over, and
+        nothing in the interface said so.
+      </p>
+      <p>
+        Now the API carries the reader that <em>actually ran</em> alongside the one configured, taken from the
+        most recent document read. The header gained a third state, <em>Claude unavailable</em>, and a banner
+        above every screen explains the consequence.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">1.3</span>Every path in the README was wrong</h3>
+        <span class="chip fixed">Fixed</span>
+      </div>
+      <p>
+        The README held five real control bytes where literal escape text belonged &mdash; <code>0x08</code>
+        for <code>\b</code>, <code>0x0c</code> for <code>\f</code>, a stray <code>0x0d</code>. Readers were
+        told to <code>cd d:\IRA\gst-automation</code>&#8203;<code>ackend</code> and to run
+        <code>.</code>&#8203;<code>un-all.ps1</code>. Every quoted path was uncopyable. A scan of all 37 source
+        files confirms the README was the only one affected.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">1.4</span>The watch-folder button had been dropped</h3>
+        <span class="chip fixed">Restored</span>
+      </div>
+      <p>
+        The interface rewrite removed <em>Check watch folder</em>, while the endpoint behind it and the
+        README's description of it as the email-intake stand-in both remained. The only non-upload intake
+        route had no way to trigger it.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">02</span> Gaps closed</h2>
+    <p class="section-note">
+      Things that were fine until the day they would not have been.
+    </p>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">2.1</span>Two processes could silently destroy tax records</h3>
+        <span class="chip closed">Closed</span>
+      </div>
+      <p class="sev">Severity <b>High</b> &mdash; unrecoverable loss of a filed record, with no error raised.</p>
+      <p>
+        Workbook writes were serialised with a thread lock &mdash; correct within one process, worth nothing
+        across two. Posting a row is read-the-register, pick-the-next-free-line, write, save. Two backends on
+        the same data directory would interleave those steps and the second save would drop the first one's
+        row. That was one <code>--workers 2</code> away.
+      </p>
+      <p>
+        The backend now takes an exclusive kernel lock on its data directory at startup. A second process
+        refuses to start:
+      </p>
+      <pre><code>AlreadyRunning: Another backend is already using
+D:\IRA\gst-automation\backend\data (held by pid 15812).
+Only one process may write these workbooks: a second one would
+silently overwrite rows the first has posted.</code></pre>
+      <p>
+        The lock is held by an open file handle, so the OS releases it on exit &mdash; crash or kill included.
+        There is no stale lock file to clear by hand.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">2.2</span>No authentication on any endpoint</h3>
+        <span class="chip closed">Closed</span>
+      </div>
+      <p>
+        Every route was open, including workbook download and the original invoice files. An optional shared
+        secret is now required on every route but the health probe, compared in constant time, accepted as a
+        header or bearer token and <strong>refused in a query string</strong> &mdash; query strings reach
+        browser history, proxy logs and referrer headers. It is off by default, which is right for one
+        machine, and startup logs a warning when off rather than leaving that silent.
+      </p>
+      <p>Two supporting changes were needed:</p>
+      <ul>
+        <li>CORS is registered <em>outside</em> the key check, so a 401 still carries its origin header and the
+          browser reports the real status instead of an opaque CORS failure.</li>
+        <li>The document viewer and workbook download now fetch bytes as blobs. An auth header cannot ride on
+          an <code>&lt;iframe src&gt;</code> or a download link &mdash; the browser issues those itself and
+          attaches nothing.</li>
+      </ul>
+      <p>
+        <strong>What this is not.</strong> One key for the whole deployment, readable by anyone who can load
+        the frontend. It draws a boundary around the network, not around a person. See 4.2.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">2.3</span>Four smaller gaps</h3>
+        <span class="chip closed">Closed</span>
+      </div>
+      <ul>
+        <li><strong>No version control.</strong> The tree was not a git repository despite carrying a
+          <code>.gitignore</code>. Initialised, with the pre-existing state committed as a baseline before any
+          change. The live API key is correctly excluded.</li>
+        <li><strong>Unbounded uploads.</strong> Now capped, checked against the declared length before the body
+          is read.</li>
+        <li><strong>Dependencies could jump a major version silently.</strong> <code>anthropic&gt;=0.40</code>
+          resolved to <code>1.0.0</code> on a fresh install with nothing to say so. All now carry an upper
+          bound below the next major.</li>
+        <li><strong>Deprecated startup hook.</strong> Migrated to the lifespan context manager, which also gives
+          the instance lock a correct release on shutdown.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">03</span> Performance and structure</h2>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">3.1</span>Uploading a print run held the request open for minutes</h3>
+        <span class="chip closed">Improved</span>
+      </div>
+      <p>
+        Upload ran the whole pipeline inline: one model call per invoice, eighteen for a print run, inside a
+        single HTTP request. A browser sat on a spinner with nothing to show, and any timeout threw away the
+        response to work that had in fact happened.
+      </p>
+      <p>
+        Capture and reading are now separate. Measured: <strong>78&nbsp;ms</strong> to respond, with documents
+        returned unread; the page then polls them out of their pending state so the inbox fills in as each
+        invoice lands. Failures in the background task are recorded on the document, because a traceback on a
+        detached task is seen by nobody.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">3.2</span>Every screen re-parsed the whole workbook</h3>
+        <span class="chip closed">Improved</span>
+      </div>
+      <p>
+        One visit to Registers re-parsed the <code>.xlsx</code> four times, then Tax position did it again,
+        against a file that had not changed. Reads are now cached against the workbook's modification time,
+        with writes evicting explicitly so correctness does not rest on timestamp resolution. Because the key
+        is the file's own mtime, <strong>a row typed directly into the workbook in Excel is still picked
+        up</strong> &mdash; which a naive cache would have masked. Suite runtime fell from ~90s to ~70s.
+      </p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3><span class="ref">3.3</span>The queue rewrote a whole file on every change</h3>
+        <span class="chip closed">Improved</span>
+      </div>
+      <p>
+        <code>store.json</code> was parsed in full on every read and rewritten in full on every write, so
+        touching one document cost time proportional to how many had ever arrived. A write was also a
+        whole-file replace &mdash; fine until the process dies mid-replace.
+      </p>
+      <p>
+        Replaced with SQLite: one file, standard library, no service to run, real transactions, indexes on the
+        columns the inbox filters by. The store's interface is unchanged, so nothing above it knows the
+        difference. An existing <code>store.json</code> is imported on first use and <strong>renamed, not
+        deleted</strong>. Verified against the live 18-document queue: identical ids, blobs identical
+        including history.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">04</span> Recommended next</h2>
+    <p class="section-note">
+      Ordered by what would matter most, not by effort. The numbering is the recommended sequence.
+    </p>
+
+    <div class="queue">
+      <div class="item">
+        <span class="rank">01</span>
+        <div>
+          <h3>Restore Claude extraction</h3>
+          <p>Operational, and blocking quality today. Until the account is topped up the system runs on the
+            offline parser, which cannot read scans at all. Nothing in the code will fix this.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">02</span>
+        <div>
+          <h3>Per-user authentication and an attribution trail</h3>
+          <p>The current key identifies a deployment, not a person. For a filing system, &ldquo;who posted this
+            row?&rdquo; is a question an auditor may reasonably ask, and today there is no answer.</p>
+          <p>Worth doing as one piece: accounts, a token per user, and a <code>posted_by</code> field carried
+            onto the document history and the archive path. That also attributes the override action &mdash;
+            posting a document that failed validation &mdash; which is the most audit-sensitive thing the
+            system permits.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">03</span>
+        <div>
+          <h3>Rate-limit the key</h3>
+          <p>A shared secret on an exposed port invites guessing, and nothing currently slows that down or
+            records the attempt. A per-IP failure counter with a backoff and a logged warning is proportionate.
+            Pairs naturally with the item above.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">04</span>
+        <div>
+          <h3>Terminate TLS</h3>
+          <p>The key and every invoice travel in clear text. On one machine that is fine; across a network it
+            is not, since the key is in a header on every request. Do it at a reverse proxy, not in the
+            application.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">05</span>
+        <div>
+          <h3>Back up the data directory</h3>
+          <p>It holds the per-period workbooks, the archived originals that constitute the audit trail, and the
+            queue. It is gitignored, correctly, and nothing backs it up. The master workbook can re-seed
+            structure but not posted rows.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">06</span>
+        <div>
+          <h3>Carry the opening credit forward automatically</h3>
+          <p>A new period starts with input-credit carry-forward at zero and says so. The correct figure is the
+            previous return's closing balance, which the application already holds. Computing it &mdash; behind
+            an explicit confirmation, since it is a filed figure &mdash; removes a manual step that is easy to
+            forget and expensive to get wrong.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">07</span>
+        <div>
+          <h3>Direct email intake</h3>
+          <p>Intake is a watch folder driven by a button. An IMAP or Graph connector polling the mailbox
+            invoices actually arrive in would close the last manual step in capture. Small, and gated only on
+            knowing which mailbox.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">08</span>
+        <div>
+          <h3>Decide on the GSTR-1 reconciliation block</h3>
+          <p>Rows 75&ndash;80 are built from a hand-written list of references covering rows 8&ndash;50, so rows
+            51&ndash;71 fall outside it. Pre-existing in the client's workbook and their tax logic, so the app
+            deliberately does not rewrite it &mdash; but it needs a decision before the register grows past row
+            50 in a live month.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">09</span>
+        <div>
+          <h3>Plan for more than one writer</h3>
+          <p>The instance lock makes today's limit explicit and safe, but it is still a limit. Serving
+            concurrent users means moving workbook writes behind a single queue consumer, not adding worker
+            processes. Nothing needs it yet; the constraint should be understood before someone reaches for
+            <code>--workers</code>.</p>
+        </div>
+      </div>
+
+      <div class="item">
+        <span class="rank">10</span>
+        <div>
+          <h3>Smaller items</h3>
+          <ul class="minor">
+            <li><strong>No frontend tests.</strong> All 135 are backend; the interface is checked by hand.</li>
+            <li><strong>No CI.</strong> The suite runs when someone remembers &mdash; which is the class of
+              problem that let 1.3 through.</li>
+            <li><strong>Secrets in plaintext.</strong> Fine on one trusted machine; a secret store is the answer
+              on a server.</li>
+            <li><strong>Duplicate detection is per-period.</strong> The same invoice number in two months is not
+              flagged. Probably right, but it is an assumption worth stating.</li>
+            <li><strong>Single tenant.</strong> The company profile is hard-coded. If the workbook format is
+              reused across clients this becomes per-tenant configuration.</li>
+            <li><strong>openpyxl drops charts and pivot tables.</strong> This workbook has neither, so nothing is
+              lost today. Re-check if it gains them.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">05</span> Verification</h2>
+    <p class="section-note">Everything below was run against the application, not reasoned about.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Check</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Test suite</td><td><span class="ok">135 passed</span> (was 104)</td></tr>
+          <tr><td>Tax read-back defect</td><td>Reproduced before, pinned after; client figures unchanged</td></tr>
+          <tr><td>Auth &mdash; no key / wrong key / right key / bearer</td><td>401 / 401 / 200 / 200</td></tr>
+          <tr><td>Auth &mdash; key in query string</td><td>401, rejected by design</td></tr>
+          <tr><td>Auth &mdash; health probe without a key</td><td>200</td></tr>
+          <tr><td>CORS header present on a 401</td><td>Confirmed</td></tr>
+          <tr><td>Second backend, same data directory</td><td>Refused to start, named the holder</td></tr>
+          <tr><td>Upload response time</td><td>78&nbsp;ms, document returned unread</td></tr>
+          <tr><td>Background reading</td><td>Completed; document reached <em>ready</em> with correct extraction</td></tr>
+          <tr><td>SQLite import of the live queue</td><td>18 in, 18 out, identical ids and blobs</td></tr>
+          <tr><td>Both servers together, auth on</td><td>All assets served, authenticated calls succeeded</td></tr>
+          <tr><td>Control-character scan, 37 files</td><td>Clean</td></tr>
+          <tr><td>Backend server log</td><td>No errors, no warnings, no unexpected non-2xx</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>Two things were not verified.</strong> The Claude extraction path end to end is blocked on
+      account credit &mdash; though the request reaches the API and returns a well-formed billing error, so the
+      SDK integration itself is confirmed working. And the interface was checked by asset delivery and API
+      contract rather than by driving a browser.
+    </p>
+  </section>
+
+  <footer>
+    Findings 1.1 and 1.2 were reproduced independently before being fixed. The tax read-back defect was
+    additionally confirmed by the session that wrote the original code, which reproduced the same figures.
+    Every change is committed separately, so any of it can be reviewed or reverted on its own.
+  </footer>
+
+</div>
+</body>
+</html>
