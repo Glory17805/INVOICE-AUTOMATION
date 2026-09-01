@@ -23,6 +23,7 @@ Open these in a browser; they need no server and no network.
 |---|---|
 | [`docs/gap-register.html`](docs/gap-register.html) | Every gap found across the data layer, API, security, operations, the browser and the GST domain. 29 findings, severity-ranked, each with the measurement behind it. **Start here.** |
 | [`docs/hardening-audit.html`](docs/hardening-audit.html) | The earlier review: the defects found and fixed, the gaps closed, and how each was verified. |
+| [`docs/reuse-assessment.html`](docs/reuse-assessment.html) | Whether `maliksudais24/Proposal-invoice-automation-` can be reused here. Short answer: it generates invoices where this reads them, and it carries no licence. |
 | [`AUDIT.md`](AUDIT.md) | The hardening audit in Markdown, for reading in a diff. |
 
 ---

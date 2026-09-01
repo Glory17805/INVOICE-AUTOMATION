@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generator vs Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --paper:      #F5F5F2;
+    --surface:    #FFFFFF;
+    --surface-2:  #FAFAF8;
+    --ink:        #16191A;
+    --ink-2:      #454B4C;
+    --ink-3:      #6E7576;
+    --rule:       #DADCD8;
+    --rule-soft:  #EAEBE8;
+
+    --ours:       #2F5D50;   /* what we built */
+    --ours-bg:    #E4EEEA;
+    --theirs:     #6B5B4E;   /* what they built - neutral, not lesser */
+    --theirs-bg:  #EFEAE4;
+
+    --take:       #2F5D50;
+    --take-bg:    #E4EEEA;
+    --idea:       #8A5A0B;
+    --idea-bg:    #F7EFDC;
+    --no:         #5C6472;
+    --no-bg:      #ECEEF2;
+    --stop:       #9E2A1B;
+    --stop-bg:    #F9E6E2;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #101211; --surface: #171A19; --surface-2: #1C201E;
+      --ink: #E7EAE7; --ink-2: #AEB5B2; --ink-3: #7B8380;
+      --rule: #2B302E; --rule-soft: #212523;
+      --ours: #7FBEA8; --ours-bg: #17302A;
+      --theirs: #C4AE97; --theirs-bg: #2C2620;
+      --take: #7FBEA8; --take-bg: #17302A;
+      --idea: #D9AE5F; --idea-bg: #332813;
+      --no: #99A1B0; --no-bg: #22262E;
+      --stop: #E8907C; --stop-bg: #3A1C16;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #101211; --surface: #171A19; --surface-2: #1C201E;
+    --ink: #E7EAE7; --ink-2: #AEB5B2; --ink-3: #7B8380;
+    --rule: #2B302E; --rule-soft: #212523;
+    --ours: #7FBEA8; --ours-bg: #17302A;
+    --theirs: #C4AE97; --theirs-bg: #2C2620;
+    --take: #7FBEA8; --take-bg: #17302A;
+    --idea: #D9AE5F; --idea-bg: #332813;
+    --no: #99A1B0; --no-bg: #22262E;
+    --stop: #E8907C; --stop-bg: #3A1C16;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif; font-size: 16.5px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet { max-width: 1060px; margin: 0 auto; padding: 0 1.4rem 6rem; }
+
+  .masthead { padding: 3.5rem 0 1.5rem; border-bottom: 2px solid var(--ink); }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: .69rem; font-weight: 500;
+    letter-spacing: .17em; text-transform: uppercase; color: var(--ours); margin: 0 0 .9rem;
+  }
+  h1 {
+    font-family: Archivo, sans-serif; font-weight: 700;
+    font-size: clamp(2rem, 5.5vw, 3.3rem); line-height: 1.03;
+    letter-spacing: -.028em; text-wrap: balance; margin: 0 0 1rem;
+  }
+  .standfirst { font-size: 1.1rem; color: var(--ink-2); max-width: 62ch; margin: 0 0 1.8rem; }
+  .facts {
+    display: flex; flex-wrap: wrap; gap: .45rem 2rem;
+    font-family: "IBM Plex Mono", monospace; font-size: .74rem; color: var(--ink-3);
+  }
+  .facts b { color: var(--ink-2); font-weight: 500; }
+  .facts a { color: var(--ours); }
+
+  /* The answer, before anything else. */
+  .verdict {
+    margin: 2.25rem 0 3rem; padding: 1.5rem 1.6rem;
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 4px solid var(--stop);
+  }
+  .verdict .tag {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--stop);
+    display: block; margin-bottom: .6rem;
+  }
+  .verdict h2 {
+    font-family: Archivo, sans-serif; font-size: 1.3rem; font-weight: 600;
+    margin: 0 0 .7rem; border: none; padding: 0; letter-spacing: -.015em;
+  }
+  .verdict p { margin: 0 0 .7rem; max-width: 74ch; }
+  .verdict p:last-child { margin-bottom: 0; }
+
+  section { margin-bottom: 3.5rem; }
+  h2 {
+    font-family: Archivo, sans-serif; font-size: 1.45rem; font-weight: 600;
+    letter-spacing: -.017em; line-height: 1.2; margin: 0 0 .3rem;
+    padding-bottom: .65rem; border-bottom: 1px solid var(--ink);
+    display: flex; align-items: baseline; gap: .8rem;
+  }
+  h2 .num {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    font-weight: 600; color: var(--ours); letter-spacing: 0;
+  }
+  .section-note { color: var(--ink-3); font-size: .92rem; margin: .75rem 0 1.75rem; max-width: 64ch; }
+
+  h3 {
+    font-family: Archivo, sans-serif; font-size: 1.06rem; font-weight: 600;
+    letter-spacing: -.01em; margin: 0 0 .5rem; text-wrap: balance;
+  }
+  p { margin: 0 0 .95rem; max-width: 70ch; }
+  ul { margin: 0 0 .95rem; padding-left: 1.1rem; max-width: 70ch; }
+  li { margin-bottom: .4rem; }
+  li::marker { color: var(--ink-3); }
+  code {
+    font-family: "IBM Plex Mono", monospace; font-size: .85em;
+    background: var(--rule-soft); padding: .1em .35em; border-radius: 2px;
+  }
+
+  /* Side by side */
+  .versus { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--rule);
+            border: 1px solid var(--rule); margin-bottom: 1.5rem; }
+  .versus > div { background: var(--surface); padding: 1.2rem 1.3rem 1.4rem; }
+  .versus .who {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    letter-spacing: .12em; text-transform: uppercase; margin-bottom: .6rem;
+  }
+  .versus .theirs-col .who { color: var(--theirs); }
+  .versus .ours-col  .who { color: var(--ours); }
+  .versus h3 { font-size: 1rem; }
+  .versus p { font-size: .93rem; margin-bottom: .6rem; }
+  .versus p:last-child { margin-bottom: 0; }
+  .flow {
+    font-family: "IBM Plex Mono", monospace; font-size: .76rem; line-height: 1.75;
+    background: var(--surface-2); border: 1px solid var(--rule-soft);
+    padding: .7rem .85rem; margin: .7rem 0; overflow-x: auto; color: var(--ink-2);
+  }
+  @media (max-width: 720px) { .versus { grid-template-columns: 1fr; } }
+
+  .table-wrap { overflow-x: auto; margin: 0 0 1.3rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+  th, td { text-align: left; padding: .58rem .85rem .58rem 0; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    border-bottom: 1px solid var(--ink); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 1px solid var(--rule); }
+  td.num { font-family: "IBM Plex Mono", monospace; text-align: right; padding-right: 1.2rem;
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th.num { text-align: right; padding-right: 1.2rem; }
+
+  .chip {
+    display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: .62rem;
+    font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    padding: .22rem .5rem; border: 1px solid currentColor; white-space: nowrap;
+  }
+  .chip.take { color: var(--take); background: var(--take-bg); }
+  .chip.idea { color: var(--idea); background: var(--idea-bg); }
+  .chip.no   { color: var(--no);   background: var(--no-bg); }
+  .chip.stop { color: var(--stop); background: var(--stop-bg); }
+
+  .item {
+    border-top: 1px solid var(--rule); padding-top: 1.3rem; margin-top: 1.8rem;
+    display: grid; grid-template-columns: 2.4rem 1fr; gap: 0 1rem;
+  }
+  .item:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .item .rank {
+    font-family: "IBM Plex Mono", monospace; font-size: .76rem; font-weight: 600;
+    color: var(--ours); padding-top: .15rem;
+  }
+  .item .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .45rem; }
+  .item .head h3 { margin: 0; flex: 1 1 18ch; }
+
+  footer {
+    border-top: 2px solid var(--ink); padding-top: 1.3rem;
+    font-size: .87rem; color: var(--ink-3); max-width: 76ch;
+  }
+  @media (max-width: 700px) { body { font-size: 15.5px; } .masthead { padding-top: 2.25rem; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="eyebrow">Ira Innovations &middot; Reuse assessment</p>
+    <h1>Generator vs Reader</h1>
+    <p class="standfirst">
+      Whether the Proposal&ndash;Invoice&nbsp;Automation repository can be reused for the GST
+      invoice automation, what overlaps, and what is worth taking from it anyway.
+    </p>
+    <div class="facts">
+      <span><b>1 September 2026</b></span>
+      <span>Theirs <b>maliksudais24/Proposal-invoice-automation-</b> @ b01551a</span>
+      <span>Ours <b>gst-automation</b> @ f8ce469</span>
+    </div>
+  </header>
+
+  <div class="verdict">
+    <span class="tag">The answer</span>
+    <h2>No &mdash; they solve the opposite problem, and the code is not licensed for reuse</h2>
+    <p>
+      Both projects have "invoice" in the name and there the resemblance ends. Theirs
+      <strong>writes invoices out</strong>: you type a client and some line items, an LLM drafts a
+      cover paragraph, and it renders a PDF. Ours <strong>reads invoices in</strong>: a document
+      arrives, the system extracts it, decides which of four GST registers it belongs on and how it
+      is taxed, and appends a row to the client's existing workbook.
+    </p>
+    <p>
+      There is no GST in their project at all. Tax is a single float, <code>tax = subtotal &times;
+      tax_rate</code>, with a default currency of <code>$</code>. No CGST/SGST/IGST split, no
+      GSTIN, no place of supply, no registers, no return period. That is not a shortcoming of their
+      work &mdash; it is a generator for a consultancy's own billing, and it does that job.
+    </p>
+    <p>
+      Separately and independently: <strong>the repository carries no licence file.</strong> Under
+      default copyright that means all rights reserved. It can be read and learned from; it cannot
+      be copied into a commercial client deliverable without the author's written permission.
+    </p>
+  </div>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">01</span> What each one actually does</h2>
+    <p class="section-note">
+      The clearest way to see it is the direction the data flows.
+    </p>
+
+    <div class="versus">
+      <div class="theirs-col">
+        <div class="who">Theirs &mdash; a generator</div>
+        <h3>Invoice &amp; Proposal Generator Agent</h3>
+        <p>You supply the facts. It produces the document.</p>
+        <div class="flow">a person types
+  client + services + rates
+        &darr;
+  validate  (schema.py)
+  total up  (calculations.py)
+  retrieve  (rag_store.py, TF-IDF)
+  write     (llm_writer.py)
+  render    (pdf_builder.py)
+        &darr;
+     a PDF to send</div>
+        <p>Built for a consultancy issuing its own proposals. The stated problem is that drafting
+          one by hand takes 20&ndash;30 minutes.</p>
+      </div>
+      <div class="ours-col">
+        <div class="who">Ours &mdash; a reader</div>
+        <h3>GST Invoice Automation</h3>
+        <p>A document arrives. It works out what it is and files it.</p>
+        <div class="flow">an invoice arrives
+  upload / email / scan
+        &darr;
+  split     (one file, many invoices)
+  extract   (Gemini or Claude)
+  classify  (sale / purchase / CN / RCM)
+  apply GST (intra vs inter-state)
+  validate  (GSTIN, arithmetic, dupes)
+        &darr;
+  a row in the client's workbook</div>
+        <p>Built for a filing obligation. The problem is the manual typing, and the
+          CGST/SGST-vs-IGST judgment call on every line.</p>
+      </div>
+    </div>
+
+    <p>
+      An invoice is the output of one system and the input of the other. Nothing in the middle of
+      theirs &mdash; the part that carries the value &mdash; has an equivalent in ours, and nothing
+      in the middle of ours has an equivalent in theirs.
+    </p>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">02</span> Feature by feature</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>Theirs</th><th>Ours</th><th>Reusable?</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Reads an existing invoice</strong></td>
+            <td>No &mdash; nothing ingests a document</td>
+            <td>Gemini or Claude against a fixed schema, offline regex fallback</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+          <tr>
+            <td><strong>Generates an invoice PDF</strong></td>
+            <td>Yes &mdash; <code>pdf_builder.py</code>, 104 lines</td>
+            <td>No</td>
+            <td><span class="chip idea">Idea</span></td>
+          </tr>
+          <tr>
+            <td><strong>GST treatment</strong></td>
+            <td>One flat <code>tax_rate</code> float</td>
+            <td>CGST/SGST vs IGST from supplier state vs place of supply, legacy state codes handled</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+          <tr>
+            <td><strong>Writes to the client's workbook</strong></td>
+            <td>No</td>
+            <td>openpyxl into four registers, preserving the sheet's own formulas and number formats</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+          <tr>
+            <td><strong>RAG / grounding</strong></td>
+            <td>TF-IDF over a service catalog and 6 past documents, fully offline</td>
+            <td>None</td>
+            <td><span class="chip idea">Idea</span></td>
+          </tr>
+          <tr>
+            <td><strong>LLM providers</strong></td>
+            <td>Groq, Anthropic, OpenAI, plus a no-LLM fallback paragraph</td>
+            <td>Gemini, Claude, plus an offline reader</td>
+            <td><span class="chip idea">Idea</span></td>
+          </tr>
+          <tr>
+            <td><strong>Arithmetic kept away from the model</strong></td>
+            <td>Yes &mdash; stated explicitly in the README</td>
+            <td>Yes &mdash; the reader is told not to decide tax treatment</td>
+            <td><span class="chip take">Shared</span></td>
+          </tr>
+          <tr>
+            <td><strong>Authentication</strong></td>
+            <td>None</td>
+            <td>Accounts, roles, scrypt, sessions, approval flow, audit trail</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+          <tr>
+            <td><strong>Frontend</strong></td>
+            <td>React + Vite, 4 components; also a Streamlit UI</td>
+            <td>Vanilla JS, no build step, 11 screens</td>
+            <td><span class="chip idea">Idea</span></td>
+          </tr>
+          <tr>
+            <td><strong>API surface</strong></td>
+            <td>2 endpoints (<code>/</code>, <code>/generate</code>)</td>
+            <td>42 endpoints</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+          <tr>
+            <td><strong>Tests</strong></td>
+            <td>None</td>
+            <td>241, pinned against the client's own figures</td>
+            <td><span class="chip no">N/A</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption style="text-align:left;font-family:'IBM Plex Mono',monospace;font-size:.66rem;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);padding-bottom:.5rem">
+          Scale, for context rather than scorekeeping
+        </caption>
+        <thead>
+          <tr><th>&nbsp;</th><th class="num">Theirs</th><th class="num">Ours</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Python</td><td class="num">662</td><td class="num">6,209</td></tr>
+          <tr><td>Frontend</td><td class="num">565</td><td class="num">3,869</td></tr>
+          <tr><td>Test code</td><td class="num">0</td><td class="num">2,700</td></tr>
+          <tr><td>API endpoints</td><td class="num">2</td><td class="num">42</td></tr>
+          <tr><td>Commits</td><td class="num">5</td><td class="num">20</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note" style="margin-top:-.6rem">
+      Theirs is a focused module built to slot into a shared team application, and it is coherent
+      at that size. The comparison is only here to show that adopting it would be replacing a
+      larger system with a smaller one aimed elsewhere.
+    </p>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">03</span> Worth taking anyway</h2>
+    <p class="section-note">
+      Three ideas are genuinely good and would improve our system. All three are approaches to
+      copy, not files &mdash; see the licence note.
+    </p>
+
+    <div class="item">
+      <span class="rank">01</span>
+      <div>
+        <div class="head">
+          <h3>PDF generation is the half we do not have</h3>
+          <span class="chip idea">Idea</span>
+        </div>
+        <p>
+          Ira Innovations issues sales invoices &mdash; that is what GSTR-1 is a register of. We
+          read those invoices back out of PDFs their billing software produced. If the goal were
+          ever to issue them from this system instead, their <code>pdf_builder.py</code> is exactly
+          the missing stage, and it is the smallest, most self-contained thing in their repository.
+        </p>
+        <p>
+          Worth raising as a product question rather than an engineering one: is issuing invoices in
+          scope, or does the billing software keep that job?
+        </p>
+      </div>
+    </div>
+
+    <div class="item">
+      <span class="rank">02</span>
+      <div>
+        <div class="head">
+          <h3>TF-IDF as an offline retrieval store</h3>
+          <span class="chip idea">Idea</span>
+        </div>
+        <p>
+          They use scikit-learn's TF-IDF vectoriser with cosine similarity as a vector store,
+          deliberately avoiding an embeddings API. It is a sound choice: no network, no key, no
+          per-call cost, and for a corpus of a few dozen documents the quality difference against
+          real embeddings barely registers.
+        </p>
+        <p>
+          The application here is different but real. Our extraction currently reads every invoice
+          cold. Grounding it against previously-confirmed invoices from the same supplier &mdash;
+          this vendor's layout, this GSTIN, the HSN codes they usually bill &mdash; would give the
+          reader a prior, and would give a reviewer a reason when something looks unusual.
+        </p>
+      </div>
+    </div>
+
+    <div class="item">
+      <span class="rank">03</span>
+      <div>
+        <div class="head">
+          <h3>A no-LLM fallback that still produces something usable</h3>
+          <span class="chip take">Shared</span>
+        </div>
+        <p>
+          Their <code>_fallback_summary()</code> writes a plain, correct cover paragraph with no
+          model involved, so the system degrades to "less elegant" rather than "broken". We reached
+          the same conclusion independently with the offline reader, and it has already earned its
+          place twice &mdash; once when the Anthropic account ran out of credit, once before a
+          Gemini key existed.
+        </p>
+        <p>
+          Convergence on this from two directions is worth noting: it is the right shape for any
+          system with a model in the middle of it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">04</span> The licence, plainly</h2>
+
+    <div class="verdict" style="margin-top:0">
+      <span class="tag">Before copying anything</span>
+      <p>
+        The repository has <strong>no licence file</strong>. Not MIT, not Apache, not "unlicensed"
+        in the permissive sense &mdash; simply absent. Under the Berne Convention and Indian
+        copyright law alike, the default for published work with no licence is
+        <strong>all rights reserved</strong>. Being publicly readable on GitHub grants the right to
+        view and fork within GitHub, not to reuse in a product.
+      </p>
+      <p>
+        This matters here specifically because the output is a commercial deliverable for a paying
+        client, filing that client's statutory returns. Copying unlicensed code into it would put a
+        copyright question inside a compliance system, which is the worst possible place for one.
+      </p>
+      <p>
+        <strong>If you want to use their code:</strong> ask the author to add a licence, or for
+        written permission. It is a reasonable request and costs them a two-line file. Until then,
+        the ideas in section 3 can be implemented from scratch &mdash; TF-IDF retrieval and PDF
+        rendering are both standard techniques, and reimplementing them from the documented
+        approach is entirely clean.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <section>
+    <h2><span class="num">05</span> Recommendation</h2>
+
+    <p>
+      <strong>Do not adopt or merge their project.</strong> It aims at a different problem, has no
+      GST model, no tests, and no licence permitting reuse. Adopting it would mean discarding the
+      workbook writer, the GST rules, the four registers, the accounts and audit trail, and 241
+      tests pinned to this client's own figures &mdash; in exchange for a PDF generator we do not
+      currently need.
+    </p>
+    <p>
+      <strong>Do take two ideas from it.</strong> Supplier-history grounding for extraction is the
+      one I would actually pursue; it addresses a real weakness, in that every invoice is currently
+      read with no memory of the last one from the same vendor. PDF generation is worth parking
+      until someone decides whether issuing invoices is in scope at all.
+    </p>
+    <p>
+      <strong>One thing worth checking with whoever sent you the link.</strong> If the expectation
+      was that this repository does what ours does, it does not. If the expectation was that the
+      two are complementary halves &mdash; one issuing, one filing &mdash; that is closer to true,
+      and a conversation about scope rather than about code.
+    </p>
+  </section>
+
+  <footer>
+    Assessed from a clone of <code>maliksudais24/Proposal-invoice-automation-</code> at commit
+    b01551a, 28 July 2026, 39 tracked files, read in full. Line counts are from
+    <code>git ls-files</code> on both repositories, excluding lockfiles. No file from that
+    repository has been copied into this project, and nothing in it was modified.
+  </footer>
+
+</div>
+</body>
+</html>
