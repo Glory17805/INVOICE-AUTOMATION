@@ -2882,7 +2882,7 @@ async function renderSettings() {
   renderThemeSwitch();
 
   // ---- Notifications -------------------------------------------------------
-  body.append(el("div", { className: "card", style: "margin-top:.9rem" }, [
+  body.append(el("div", { className: "card" }, [
     el("header", {}, [el("h2", { textContent: "Notifications" })]),
     el("div", { className: "card-body form" }, [
       toggleRow("notify_on_complete", "When processing finishes", data.values.notify_on_complete),

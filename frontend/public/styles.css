@@ -1145,3 +1145,9 @@ table.grid.log code {
 }
 .not-built .big { font-size: 1rem; font-weight: 650; }
 .not-built p { margin: 0; max-width: 46ch; color: var(--ink-2); font-size: 0.88rem; line-height: 1.55; }
+
+/* Cards stacked straight down a screen sat flush, borders touching, so six
+   settings panels read as one long box with rules through it. Scoped to a
+   screen body's direct children: cards inside a grid are spaced by its gap,
+   and the dashboard's blocks carry their own margin. */
+.page > div > .card + .card { margin-top: 0.9rem; }
