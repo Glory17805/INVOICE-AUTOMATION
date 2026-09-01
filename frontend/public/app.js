@@ -30,6 +30,10 @@ const state = {
   historyQuery: "",
   historyFilter: "",
   settings: {},
+
+  // Which sidebar groups are expanded. Remembered across navigation so the
+  // navigation does not reshuffle itself under the pointer.
+  navOpen: {},
 };
 
 // --------------------------------------------------------------------------- //
@@ -254,8 +258,9 @@ function toast(message, kind = "") {
 
 async function loadInfo() {
   state.info = await api("/api/info");
-  $("#brand-name").textContent = state.info.company;
-  $("#brand-gstin").textContent = state.info.gstin;
+  // The company is named in the account chip and on the Rules screen; the
+  // sidebar carries the product mark rather than repeating it.
+  document.title = `${state.info.company} — InvoiceFlow`;
 
   /* Three states, not two. Holding a key is not the same as the model
      answering: an expired key, an exhausted balance or a dropped network all
@@ -324,17 +329,30 @@ async function loadInfo() {
   renderPeriods();
 }
 
+/* Keeps the chosen period valid. The picker itself now lives on the screens
+   that actually read the workbook, rather than in a bar above every screen
+   where changing it appeared to do nothing. */
 function renderPeriods() {
-  const picker = $("#period-picker");
   const known = state.info.periods || [];
   if (!state.period || !known.includes(state.period)) {
     state.period = known[0] || state.info.master_period;
   }
-  picker.textContent = "";
-  for (const period of known) {
-    picker.append(el("option", { value: period, selected: period === state.period, textContent: period }));
+}
+
+/* A period picker, built where it is needed. */
+function periodPicker(onChange) {
+  const picker = el("select", { className: "control" });
+  for (const period of state.info.periods || []) {
+    picker.append(el("option", { value: period, textContent: period,
+                                 selected: period === state.period }));
   }
-  if (!known.length) picker.append(el("option", { textContent: state.period || "—" }));
+  if (!(state.info.periods || []).length) {
+    picker.append(el("option", { textContent: state.period || "—" }));
+  }
+  picker.addEventListener("change", () => { state.period = picker.value; onChange(); });
+  return el("div", { className: "field compact" }, [
+    el("label", { textContent: "Return period" }), picker,
+  ]);
 }
 
 async function loadDocuments() {
@@ -345,9 +363,18 @@ async function loadDocuments() {
   for (const id of [...state.selected]) {
     if (!state.documents.some((d) => d.id === id && d.status === "ready")) state.selected.delete(id);
   }
+  paintPips();
+}
+
+/* The counts on the navigation and the bell. Called from loadDocuments and
+   again whenever the navigation is rebuilt, because rebuilding it throws the
+   previous pip elements away. */
+function paintPips() {
   const counts = tally();
   setPip("#pip-inbox", counts.open, counts.needs_review ? "attention" : "ready");
-  setPip("#pip-review", counts.needs_review + counts.ready, counts.needs_review ? "attention" : "ready");
+  setPip("#pip-review", counts.needs_review + counts.ready,
+         counts.needs_review ? "attention" : "ready");
+  setPip("#pip-email", 0, "");
 
   /* The bell counts only what a person has to decide about - things flagged or
      failed. Counting everything in the queue would leave a permanent badge,
@@ -369,7 +396,10 @@ function tally() {
 }
 
 function setPip(sel, value, kind) {
+  // A pip only exists while its group is expanded, so a missing one is normal
+  // rather than a fault.
   const node = $(sel);
+  if (!node) return;
   node.textContent = value || "";
   node.dataset.zero = String(!value);
   node.className = `pip ${value ? kind : ""}`;
@@ -1027,13 +1057,16 @@ async function renderRegisters() {
   const body = $("#registers-body");
   body.textContent = "";
 
-  const tabs = el("div", { style: "display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.9rem" },
-    REGISTERS.map(([key, label, sheet]) => el("button", {
+  const tabs = el("div", { className: "filters" }, [
+    ...REGISTERS.map(([key, label, sheet]) => el("button", {
       className: `btn sm${state.register === key ? " primary" : ""}`,
       textContent: label,
       title: sheet,
       onclick: () => { state.register = key; renderRegisters(); },
-    })));
+    })),
+    el("span", { className: "grow" }),
+    periodPicker(renderRegisters),
+  ]);
   body.append(tabs);
 
   let data;
@@ -1078,6 +1111,9 @@ const sum3 = (o) => Number(o.igst || 0) + Number(o.cgst || 0) + Number(o.sgst ||
 async function renderTax() {
   const body = $("#tax-body");
   body.textContent = "";
+  body.append(el("div", { className: "filters" }, [
+    el("span", { className: "grow" }), periodPicker(renderTax),
+  ]));
 
   let data;
   try {
@@ -1296,9 +1332,15 @@ function renderThemeSwitch() {
 // --------------------------------------------------------------------------- //
 
 const SCREENS = [
-  "dashboard", "upload", "processing", "queue", "review",
-  "history", "registers", "tax", "email", "settings", "admin",
+  "dashboard", "upload", "processing", "queue", "review", "history",
+  "export", "registers", "tax",
+  "vendors", "categories", "templates", "rules",
+  "email", "settings", "admin", "audit",
 ];
+
+// Screens only an administrator may open. Checked here as well as on the
+// server, which is the half that actually enforces it.
+const ADMIN_SCREENS = new Set(["admin", "audit"]);
 
 /* The nav has no Processing button - it is somewhere the app sends you after
    an upload, not somewhere you choose to go. */
@@ -1312,19 +1354,20 @@ function screenFromHash() {
 
 function show(name, { push = true } = {}) {
   if (!SCREENS.includes(name)) name = "dashboard";
-  if (name === "admin" && !isAdmin()) {
+  if (ADMIN_SCREENS.has(name) && !isAdmin()) {
     toast("That needs an administrator account.", "error");
     name = "dashboard";
   }
 
   state.screen = name;
   if (push && screenFromHash() !== name) location.hash = `#/${name}`;
-  for (const button of document.querySelectorAll("#nav button")) {
-    const active = button.dataset.screen === name
-      || (name === "processing" && button.dataset.screen === "upload");
-    if (active) button.setAttribute("aria-current", "page");
-    else button.removeAttribute("aria-current");
-  }
+
+  // A child screen reached from elsewhere leaves its parent group open, rather
+  // than collapsing the thing the current page sits inside.
+  const parent = groupHolding(name);
+  if (parent) state.navOpen[parent.label] = true;
+  renderNav();
+
   for (const id of SCREENS) $(`#screen-${id}`).hidden = id !== name;
 
   /* The page's own heading moves into the top bar, so the title sits on the
@@ -1346,11 +1389,6 @@ function show(name, { push = true } = {}) {
     if (who) $("#page-title").textContent = `${part}, ${who.split(" ")[0]}`;
   }
 
-  // The period picker only means something on the screens that read the
-  // workbook; offering it elsewhere invites people to change it expecting
-  // something to happen.
-  $(".topbar .field.compact").hidden = !["registers", "tax", "dashboard"].includes(name);
-
   const renderers = {
     dashboard: renderDashboard,
     upload: renderUpload,
@@ -1358,11 +1396,17 @@ function show(name, { push = true } = {}) {
     queue: renderInbox,
     review: renderReview,
     history: renderHistory,
+    export: renderExport,
     registers: renderRegisters,
     tax: renderTax,
+    vendors: renderVendors,
+    categories: renderCategories,
+    templates: renderTemplates,
+    rules: renderRules,
     email: renderEmail,
     settings: renderSettings,
     admin: renderAdmin,
+    audit: renderAudit,
   };
   (renderers[name] || renderDashboard)();
 }
@@ -1385,21 +1429,27 @@ function wire() {
     try { await api("/api/auth/logout", { method: "POST" }); } catch (_) { /* going anyway */ }
     signOut();
   });
-  $("#who").addEventListener("click", () => show("settings"));
+  // The account chip opens a small menu rather than jumping straight to
+  // settings: signing out is the other thing people come here for.
+  const menu = $("#who-menu");
+  $("#who").addEventListener("click", (event) => {
+    event.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener("click", () => { menu.hidden = true; });
+  menu.addEventListener("click", (event) => {
+    const target = event.target.closest("[data-screen]");
+    if (target) { menu.hidden = true; show(target.dataset.screen); }
+  });
 
-  for (const button of document.querySelectorAll("#nav button")) {
-    button.addEventListener("click", () => show(button.dataset.screen));
-  }
+  $("#btn-guide").addEventListener("click", () => show("rules"));
+
+  // The navigation is rebuilt on every screen change, so its buttons carry
+  // their own handlers rather than being wired once from here.
 
   const input = $("#file-input");
   input.addEventListener("change", () => { upload([...input.files]); input.value = ""; });
   wireDropzone($("#dropzone"));
-
-  $("#period-picker").addEventListener("change", (e) => {
-    state.period = e.target.value;
-    if (state.screen === "registers") renderRegisters();
-    if (state.screen === "tax") renderTax();
-  });
 
   $("#btn-scan").addEventListener("click", checkWatchFolder);
 
@@ -1421,13 +1471,14 @@ function wire() {
     else toast("Nothing needs your attention.", "good");
   });
 
-  $("#btn-download").addEventListener("click", () => saveWorkbook(state.period));
-
-  $("#btn-reset").addEventListener("click", async () => {
-    if (!confirm("Discard every posted row and start again from the master workbook?")) return;
-    try { await api("/api/workbook/reset", { method: "POST" }); state.reviewId = null; state.selected.clear(); toast("Reset."); }
-    catch (err) { toast(err.message, "error"); }
-    await refresh();
+  // One button, cycling light -> dark -> follow the system, as the mockup has
+  // it. The three-way segmented control it replaces is still reachable from
+  // Settings for anyone who wants to pick explicitly.
+  $("#btn-theme").addEventListener("click", () => {
+    const order = ["light", "dark", "system"];
+    const next = order[(order.indexOf(state.theme) + 1) % order.length];
+    setTheme(next);
+    toast(next === "system" ? "Following your system theme" : `${next} theme`);
   });
 
   // Reviewing a batch is faster from the keyboard than the mouse.
@@ -1889,6 +1940,162 @@ function timeChart(points) {
     built.marker.setAttribute("opacity", 0);
   });
   return hold;
+}
+
+// --------------------------------------------------------------------------- //
+// Navigation
+//
+// Built from a description rather than written out in the markup, because
+// several entries are groups that expand and one is admin-only. Every entry
+// leads somewhere real: nothing here is a link to a screen that does not exist.
+// --------------------------------------------------------------------------- //
+
+const NAV_ICON = {
+  dashboard: "M2 2.2h5.2v5.2H2zM8.8 2.2H14v5.2H8.8zM2 8.8h5.2V14H2zM8.8 8.8H14V14H8.8z",
+  upload:    "M8 11V3m0 0L5 6m3-3 3 3M2.5 12.5h11",
+  invoices:  "M4.5 1.8h5l3 3v9.4h-8zM9.5 1.8v3h3M6 8.5h4M6 11h2.5",
+  gears:     "M8 2.2a5.8 5.8 0 0 1 5.5 4M13.8 8A5.8 5.8 0 0 1 8 13.8M2.5 6A5.8 5.8 0 0 1 8 2.2"
+             + "M8 13.8A5.8 5.8 0 0 1 2.2 8M12 1.6v3h-3M4 14.4v-3h3",
+  export:    "M8 2v7m0 0L5.4 6.4M8 9l2.6-2.6M2.5 11v2.5h11V11",
+  reports:   "M2.4 13.2h11.2M4.6 13V8.4M7.5 13V4.2M10.4 13V6.8M13.3 13V9.6",
+  vendors:   "M5.6 7.4a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM1.8 13.4c0-2.1 1.7-3.4 3.8-3.4"
+             + "s3.8 1.3 3.8 3.4M11 4.2a1.9 1.9 0 1 1 0 3.8M11.6 10.2c1.6.2 2.6 1.3 2.6 3.2",
+  category:  "M2 3.6h12M2 8h12M2 12.4h7",
+  templates: "M2.4 2.6h11.2v3.2H2.4zM2.4 7.8h5v5.6h-5zM8.8 7.8h4.8v5.6H8.8z",
+  rules:     "M3 2.6h10v10.8H3zM5.4 5.6h5.2M5.4 8h5.2M5.4 10.4h3",
+  users:     "M6 7.6a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6zM1.9 13.4c0-2.2 1.8-3.6 4.1-3.6"
+             + "s4.1 1.4 4.1 3.6M11.4 4.4a1.9 1.9 0 1 1 0 3.8M12 10.4c1.5.3 2.4 1.4 2.4 3",
+  settings:  "M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6"
+             + "M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6 3.5 3.5",
+  audit:     "M8 4.4V8l2.4 1.4M14.2 8A6.2 6.2 0 1 1 8 1.8",
+  email:     "M1.8 3.8h12.4v8.4H1.8zM2.1 4.4 8 8.9l5.9-4.5",
+};
+
+/* label, screen or children, icon, and whether it is admin-only. */
+const NAV = [
+  { label: "Dashboard", screen: "dashboard", icon: "dashboard" },
+
+  { group: "Core" },
+  { label: "Upload Invoices", screen: "upload", icon: "upload" },
+  { label: "Invoices", icon: "invoices", children: [
+      { label: "Queue", screen: "queue", pip: "pip-inbox" },
+      { label: "Review", screen: "review", pip: "pip-review" },
+      { label: "History", screen: "history" },
+  ] },
+  { label: "Processing", icon: "gears", children: [
+      { label: "In progress", screen: "processing" },
+      { label: "Email intake", screen: "email", pip: "pip-email" },
+  ] },
+  { label: "Excel Export", screen: "export", icon: "export" },
+  { label: "Reports", icon: "reports", children: [
+      { label: "GST registers", screen: "registers" },
+      { label: "Tax position", screen: "tax" },
+  ] },
+
+  { group: "Management" },
+  { label: "Vendors", screen: "vendors", icon: "vendors" },
+  { label: "Categories", screen: "categories", icon: "category" },
+  { label: "Templates", screen: "templates", icon: "templates" },
+  { label: "Rules", screen: "rules", icon: "rules" },
+
+  { group: "Admin" },
+  { label: "Users", screen: "admin", icon: "users", adminOnly: true },
+  { label: "Settings", screen: "settings", icon: "settings" },
+  { label: "Audit Logs", screen: "audit", icon: "audit", adminOnly: true },
+];
+
+function navIcon(name) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.45");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.append(svgEl("path", { d: NAV_ICON[name] || NAV_ICON.dashboard }));
+  return svg;
+}
+
+function chevron() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.6");
+  svg.setAttribute("class", "chevron");
+  svg.setAttribute("aria-hidden", "true");
+  svg.append(svgEl("path", { d: "m6 4 4 4-4 4", "stroke-linecap": "round",
+                             "stroke-linejoin": "round" }));
+  return svg;
+}
+
+/* Which group, if any, contains a screen - so opening a child screen from
+   somewhere else leaves its parent expanded rather than collapsed over it. */
+function groupHolding(screen) {
+  return NAV.find((entry) => entry.children
+    && entry.children.some((child) => child.screen === screen));
+}
+
+function renderNav() {
+  const nav = $("#nav");
+  nav.textContent = "";
+  const current = state.screen;
+
+  for (const entry of NAV) {
+    if (entry.group) {
+      nav.append(el("div", { className: "nav-group", textContent: entry.group }));
+      continue;
+    }
+    if (entry.adminOnly && !isAdmin()) continue;
+
+    if (entry.children) {
+      const holds = entry.children.some((child) => child.screen === current);
+      const open = state.navOpen[entry.label] ?? holds;
+      const button = el("button", {
+        type: "button", "aria-expanded": String(open),
+        onclick: () => { state.navOpen[entry.label] = !open; renderNav(); },
+      }, [
+        navIcon(entry.icon),
+        el("span", { className: "label", textContent: entry.label }),
+        chevron(),
+      ]);
+      button.setAttribute("aria-expanded", String(open));
+      nav.append(button);
+
+      if (open) {
+        const sub = el("div", { className: "sub" });
+        for (const child of entry.children) {
+          sub.append(navButton(child, current));
+        }
+        nav.append(sub);
+      }
+      continue;
+    }
+
+    nav.append(navButton(entry, current));
+  }
+
+  // The pips are written by loadDocuments, which may have run already.
+  paintPips();
+}
+
+function navButton(entry, current) {
+  const button = el("button", {
+    type: "button",
+    onclick: () => show(entry.screen),
+  }, [
+    entry.icon ? navIcon(entry.icon) : null,
+    el("span", { className: "label", textContent: entry.label }),
+    entry.pip ? el("span", { className: "pip", id: entry.pip }) : null,
+  ]);
+  if (entry.screen === current) button.setAttribute("aria-current", "page");
+  button.dataset.screen = entry.screen;
+  return button;
 }
 
 /* A headline figure with its month-on-month change and a 30-day shape.
@@ -2657,8 +2864,25 @@ async function renderSettings() {
     ]));
   }
 
-  // ---- Notifications -------------------------------------------------------
+  // ---- Appearance ----------------------------------------------------------
+  // The top bar has a single button that cycles; this is where the choice can
+  // be made explicitly, including "follow the system", which a cycling button
+  // makes awkward to land on deliberately.
+  const themeBox = el("div", { className: "segmented", id: "theme-switch",
+                               role: "group", "aria-label": "Colour theme" });
   body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Appearance" })]),
+    el("div", { className: "card-body form" }, [
+      el("label", {}, [el("span", {}, "Colour theme"), themeBox]),
+      el("p", { className: "muted" },
+        "Following the system means the page changes with your operating system's "
+        + "light and dark setting."),
+    ]),
+  ]));
+  renderThemeSwitch();
+
+  // ---- Notifications -------------------------------------------------------
+  body.append(el("div", { className: "card", style: "margin-top:.9rem" }, [
     el("header", {}, [el("h2", { textContent: "Notifications" })]),
     el("div", { className: "card-body form" }, [
       toggleRow("notify_on_complete", "When processing finishes", data.values.notify_on_complete),
@@ -2959,6 +3183,328 @@ async function resetLinkFor(person) {
 }
 
 // --------------------------------------------------------------------------- //
+// Vendors
+// --------------------------------------------------------------------------- //
+
+async function renderVendors() {
+  const body = $("#vendors-body");
+  body.textContent = "";
+
+  let vendors;
+  try {
+    vendors = await api("/api/suppliers");
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  if (!vendors.length) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, [
+      el("div", { className: "big" }, "No vendors yet"),
+      "A party appears here once one of their invoices has been posted. Nothing is "
+      + "learned from a document still waiting in the queue.",
+    ])));
+    return;
+  }
+
+  const rows = el("tbody");
+  for (const vendor of vendors) {
+    rows.append(el("tr", {}, [
+      el("td", {}, [
+        el("div", { className: "cell-main", textContent: vendor.name }),
+        el("div", { className: "cell-sub mono", textContent: vendor.gstin || "no GSTIN recorded" }),
+      ]),
+      el("td", { className: "num", textContent: String(vendor.invoice_count) }),
+      el("td", { textContent: vendor.usual_rate != null
+        ? `${(Number(vendor.usual_rate) * 100).toFixed(2)}%`
+          + (vendor.rates_seen.length > 1 ? ` (+${vendor.rates_seen.length - 1} more)` : "")
+        : "—" }),
+      el("td", { textContent: (vendor.registers || [])
+        .map((r) => REGISTER_SHEET[r] || r).join(", ") || "—" }),
+      el("td", { className: "cell-sub", textContent: vendor.last_seen
+        ? vendor.last_seen.replace("T", " ").slice(0, 16) : "—" }),
+    ]));
+  }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: `${vendors.length} vendor${vendors.length === 1 ? "" : "s"}` }),
+      el("span", { className: "grow" }),
+      el("span", { className: "muted", textContent: "learned from posted invoices only" }),
+    ]),
+    el("div", { className: "table-wrap" }, el("table", { className: "grid" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { textContent: "Vendor" }),
+        el("th", { className: "num", textContent: "Invoices" }),
+        el("th", { textContent: "Usual rate" }),
+        el("th", { textContent: "Register" }),
+        el("th", { textContent: "Last filed" }),
+      ])),
+      rows,
+    ])),
+  ]));
+
+  body.append(el("p", { className: "muted", style: "margin-top:.8rem" },
+    "A new invoice that disagrees with any of this — a different GSTIN, a rate this "
+    + "vendor has never used — is flagged for you on the Review screen."));
+}
+
+// --------------------------------------------------------------------------- //
+// Categories - the four registers, and how an invoice lands on one
+// --------------------------------------------------------------------------- //
+
+const CATEGORY_NOTES = [
+  ["sales", "Anything we issued. Decided by the supplier GSTIN or name matching this company."],
+  ["credit_note", "Checked first, whichever direction it points — a credit note is a credit "
+                  + "note whether we issued it or received it."],
+  ["rcm", "A purchase where the bill says reverse charge applies. It goes here rather than to "
+          + "the purchase register because the RCM sheet has no CGST/SGST columns at all: the "
+          + "buyer pays that tax directly instead of the seller collecting it."],
+  ["purchase", "Everything else we received."],
+];
+
+async function renderCategories() {
+  const body = $("#categories-body");
+  body.textContent = "";
+
+  const explain = el("div", { className: "explain" });
+  for (const [key, note] of CATEGORY_NOTES) {
+    explain.append(el("div", { className: "explain-row" }, [
+      el("div", { className: "term" }, [
+        document.createTextNode(TYPE_LABEL[key] || key),
+        el("span", { className: "sub", textContent: REGISTER_SHEET[key] || "" }),
+      ]),
+      el("div", { className: "detail", textContent: note }),
+    ]));
+  }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: "The four registers" }),
+      el("span", { className: "grow" }),
+      el("button", { className: "btn sm ghost", textContent: "See the rows",
+                     onclick: () => show("registers") }),
+    ]),
+    explain,
+  ]));
+
+  body.append(el("div", { className: "card", style: "margin-top:.9rem" }, [
+    el("header", {}, [el("h2", { textContent: "The order matters" })]),
+    el("div", { className: "card-body" }, el("p", { className: "muted" },
+      "Credit note first, then reverse charge, then seller-or-buyer. An invoice that is both "
+      + "a credit note and reverse charge is a credit note, because that is the register it "
+      + "has to be reported on.")),
+  ]));
+}
+
+// --------------------------------------------------------------------------- //
+// Templates - honestly empty
+// --------------------------------------------------------------------------- //
+
+function renderTemplates() {
+  const body = $("#templates-body");
+  body.textContent = "";
+  body.append(el("div", { className: "card" }, el("div", { className: "not-built" }, [
+    el("div", { className: "glyph" }, icon("info", 22)),
+    el("div", { className: "big" }, "Not built"),
+    el("p", {}, "This would hold a saved layout per vendor — where on the page their invoice "
+      + "number sits, which column carries the taxable value — so a familiar format could be "
+      + "read without a model call at all."),
+    el("p", {}, "Nothing here is pretending to work. The reader currently handles every layout "
+      + "the same way, which costs more but needs no setup when a vendor changes their format."),
+    el("button", { className: "btn sm", textContent: "See what is known per vendor",
+                   onclick: () => show("vendors") }),
+  ])));
+}
+
+// --------------------------------------------------------------------------- //
+// Rules - every judgment the system makes without asking
+// --------------------------------------------------------------------------- //
+
+function ruleRow(term, sub, detail) {
+  return el("div", { className: "explain-row" }, [
+    el("div", { className: "term" }, [
+      document.createTextNode(term),
+      sub ? el("span", { className: "sub", textContent: sub }) : null,
+    ]),
+    el("div", { className: "detail" }, detail),
+  ]);
+}
+
+function renderRules() {
+  const body = $("#rules-body");
+  body.textContent = "";
+  const info = state.info || {};
+
+  const tax = el("div", { className: "explain" }, [
+    ruleRow("Intra-state", "same state", [
+      "Supplier state and place of supply agree, so the tax splits: CGST and SGST each get ",
+      el("code", { textContent: "taxable value × rate ÷ 2" }), ".",
+    ]),
+    ruleRow("Inter-state", "different states", [
+      "The whole ", el("code", { textContent: "taxable value × rate" }), " goes to IGST.",
+    ]),
+    ruleRow("Which state", "from the GSTIN", [
+      "The supplier's state is the first two characters of their GSTIN, compared against the "
+      + "place of supply printed on the document. Andhra Pradesh is a special case: invoices "
+      + "still print the pre-2014 code 28 against a 37 GSTIN, and both are treated as the "
+      + "same state.",
+    ]),
+    ruleRow("Return period", "from the invoice date", [
+      "Never configured. An invoice files against the month it was raised in, so a July "
+      + "invoice goes to July's workbook whatever else is in the queue beside it.",
+    ]),
+  ]);
+
+  const checks = el("div", { className: "explain" }, [
+    ruleRow("GSTIN checksum", "blocks posting", [
+      "The fifteenth character is recomputed from the first fourteen. A single misread "
+      + "character fails it.",
+    ]),
+    ruleRow("Arithmetic", "blocks posting", [
+      "The tax printed on the document is reconciled against the tax its own figures imply, "
+      + "to within one rupee — invoices round each line before totalling, so exact equality "
+      + "is the wrong bar.",
+    ]),
+    ruleRow("Duplicates", "blocks posting", [
+      "Checked by reading the register back, not by trusting the queue. Also checked at "
+      + "upload, by the file's content, before anything is read.",
+    ]),
+    ruleRow("Vendor history", "warns only", [
+      "A GSTIN or a rate that disagrees with every previous invoice from that vendor. A "
+      + "warning rather than a blocker: vendors do re-register, and a rate legitimately "
+      + "differs by what was sold.",
+    ]),
+  ]);
+
+  body.append(
+    el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "How the tax is split" })]), tax,
+    ]),
+    el("div", { className: "card", style: "margin-top:.9rem" }, [
+      el("header", {}, [el("h2", { textContent: "What is checked before a row is written" })]),
+      checks,
+    ]),
+    el("div", { className: "card", style: "margin-top:.9rem" }, [
+      el("header", {}, [el("h2", { textContent: "Settings in force" })]),
+      el("div", { className: "card-body" }, el("div", { className: "kv" }, [
+        el("span", { className: "k" }, "Approval"),
+        el("span", { className: "v" }, info.approval_mode === "every_row"
+          ? "Every document stops at Review first"
+          : "Clean documents go straight to Ready; flagged ones stop"),
+        el("span", { className: "k" }, "Reader"),
+        el("span", { className: "v" }, `${info.provider || info.reader || "offline"}`
+          + (info.model ? ` · ${info.model}` : "")),
+        el("span", { className: "k" }, "Company"),
+        el("span", { className: "v" }, `${info.company || ""} · ${info.gstin || ""}`),
+      ])),
+    ]),
+    el("p", { className: "muted", style: "margin-top:.8rem" },
+      "These are decided in code and covered by tests, not configured here. The reader is "
+      + "told explicitly not to decide any of it — it reports what is printed."),
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Excel export
+// --------------------------------------------------------------------------- //
+
+async function renderExport() {
+  const body = $("#export-body");
+  body.textContent = "";
+  const info = state.info || {};
+
+  const picker = el("select", { className: "control" });
+  for (const period of info.periods || []) {
+    picker.append(el("option", { value: period, textContent: period,
+                                 selected: period === state.period }));
+  }
+  picker.addEventListener("change", () => { state.period = picker.value; renderExport(); });
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [el("h2", { textContent: "Download the workbook" })]),
+    el("div", { className: "card-body form" }, [
+      el("label", {}, [el("span", {}, "Return period"), picker]),
+      el("p", { className: "muted" },
+        "One workbook per return period, seeded from your master and appended to. The source "
+        + "file is never written to."),
+      el("div", { className: "row-actions" }, [
+        el("button", { className: "btn primary", textContent: "Download .xlsx",
+                       onclick: () => saveWorkbook(state.period) }),
+        el("button", { className: "btn", textContent: "See the rows first",
+                       onclick: () => show("registers") }),
+      ]),
+    ]),
+  ]));
+
+  if (isAdmin()) {
+    body.append(el("div", { className: "card", style: "margin-top:.9rem" }, [
+      el("header", {}, [el("h2", { textContent: "Start this period again" })]),
+      el("div", { className: "card-body" }, [
+        el("p", { className: "muted" },
+          "Discards every posted row for this period and re-seeds the workbook from the "
+          + "master. The archived originals are kept."),
+        el("div", { className: "row-actions" }, [
+          el("button", { className: "btn danger", textContent: "Reset this period",
+                         onclick: resetWorkbook }),
+        ]),
+      ]),
+    ]));
+  }
+}
+
+// --------------------------------------------------------------------------- //
+// Audit logs
+// --------------------------------------------------------------------------- //
+
+async function renderAudit() {
+  const body = $("#audit-body");
+  body.textContent = "";
+
+  let log;
+  try {
+    log = await api("/api/admin/activity?limit=200");
+  } catch (err) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
+    return;
+  }
+
+  if (!log.length) {
+    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, "Nothing yet.")));
+    return;
+  }
+
+  const rows = el("tbody");
+  for (const entry of log) {
+    const [words] = ACTIVITY_WORDS[entry.action] || [entry.action.replace(/_/g, " ")];
+    rows.append(el("tr", {}, [
+      el("td", { className: "cell-sub", textContent: entry.at.replace("T", " ").slice(0, 16) }),
+      el("td", { textContent: entry.user_email || "—" }),
+      el("td", {}, [
+        el("div", { textContent: words }),
+        el("div", { className: "cell-sub mono", textContent: entry.action }),
+      ]),
+      el("td", { className: "cell-sub", textContent: entry.detail || "" }),
+    ]));
+  }
+
+  body.append(el("div", { className: "card" }, [
+    el("header", {}, [
+      el("h2", { textContent: `${log.length} entries` }),
+      el("span", { className: "grow" }),
+      el("span", { className: "muted", textContent: "newest first" }),
+    ]),
+    el("div", { className: "table-wrap" }, el("table", { className: "grid log" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { textContent: "When" }), el("th", { textContent: "Who" }),
+        el("th", { textContent: "What" }), el("th", { textContent: "Detail" }),
+      ])),
+      rows,
+    ])),
+  ]));
+}
+
+// --------------------------------------------------------------------------- //
 // Boot
 // --------------------------------------------------------------------------- //
 
@@ -2968,8 +3514,23 @@ function paintIdentity() {
     .split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
   $("#who-initials").textContent = initials || "?";
   $("#who-name").textContent = user.name || user.email || "—";
-  $("#who-role").textContent = user.role === "admin" ? "Administrator" : "User";
-  $("#nav-admin").hidden = !isAdmin();
+  $("#who-role").textContent = user.role === "admin" ? "Admin" : "User";
+  // The admin-only entries are filtered out when the navigation is built.
+  renderNav();
+}
+
+/* Shared by the Excel export screen and anywhere else that offers it. */
+async function resetWorkbook() {
+  if (!confirm("Discard every posted row and start again from the master workbook?")) return;
+  try {
+    await api("/api/workbook/reset", { method: "POST" });
+    state.reviewId = null;
+    state.selected.clear();
+    toast("Reset.");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+  await refresh();
 }
 
 async function enterApp() {
