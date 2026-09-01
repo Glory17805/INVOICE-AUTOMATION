@@ -15,8 +15,8 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
+from . import history, runtime, store, uploads, workbook
 from . import period as periods
-from . import runtime, store, uploads, workbook
 from .config import (
     ARCHIVE_DIR,
     INCOMING_DIR,
@@ -413,10 +413,22 @@ def process(doc_id: str) -> dict:
             severity="warning",
         )
 
+    # What the previous invoices from this supplier say. Deliberately after the
+    # read and never fed into it: handing the reader a plausible prior invites
+    # it to reconcile the document against history rather than report what is
+    # printed, and an invented GSTIN that matches the last eleven invoices is
+    # the hardest kind of wrong to notice.
+    supplier = history.match(treatment.counterparty_name, treatment.counterparty_gstin)
+    for code, message in history.anomalies(
+        treatment.counterparty_name, treatment.counterparty_gstin, treatment.rate
+    ):
+        result.add(code, message, severity="warning")
+
     status = _status_for(result)
 
     return store.update(doc_id, {
         "status": status.value,
+        "supplier_history": supplier.as_dict() if supplier else None,
         "stage": Stage.DONE,
         "reader": reader,
         "reader_note": reader_note,

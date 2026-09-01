@@ -24,7 +24,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import accounts, appsettings, auth, db, pipeline, runtime, singleton, store, workbook
+from . import (
+    accounts,
+    appsettings,
+    auth,
+    db,
+    history,
+    pipeline,
+    runtime,
+    singleton,
+    store,
+    workbook,
+)
 from . import period as periods
 from .auth import require_admin, require_user
 from .config import (
@@ -924,6 +935,16 @@ def _resolve_period(period: str | None) -> str:
 # --------------------------------------------------------------------------- #
 # Email intake
 # --------------------------------------------------------------------------- #
+
+@app.get("/api/suppliers")
+def suppliers(user: dict = Depends(require_user)) -> list[dict]:
+    """Every party filed for, and what is usual for them.
+
+    Built from posted documents only, so it reflects what a person confirmed
+    rather than what a reader guessed.
+    """
+    return history.summary()
+
 
 @app.get("/api/email/status")
 def email_status(user: dict = Depends(require_user)) -> dict:

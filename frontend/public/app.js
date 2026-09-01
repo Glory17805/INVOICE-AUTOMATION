@@ -691,6 +691,43 @@ function renderReview() {
 
   body.append(el("div", { className: "review-grid" }, [left, right]));
 
+  /* What this supplier has done before, from invoices already posted. Shown,
+     never used: the reader is not told any of this, because handing it a
+     plausible prior invites it to report history instead of the document. */
+  const seen = doc.supplier_history;
+  if (seen && seen.invoice_count) {
+    const facts = el("div", { className: "kv" });
+    const add = (k, v) => {
+      facts.append(el("span", { className: "k", textContent: k }));
+      facts.append(el("span", { className: "v", textContent: v }));
+    };
+    add("Invoices filed", String(seen.invoice_count));
+    if (seen.gstin) add("GSTIN used", seen.gstin);
+    if (seen.usual_rate != null) {
+      const rates = (seen.rates_seen || []).length;
+      add("Usual rate", `${(Number(seen.usual_rate) * 100).toFixed(2)}%`
+        + (rates > 1 ? ` (${rates} different rates seen)` : ""));
+    }
+    if ((seen.registers || []).length) {
+      add("Register", seen.registers.map((r) => REGISTER_SHEET[r] || r).join(", "));
+    }
+    if (seen.last_seen) add("Last filed", seen.last_seen.replace("T", " ").slice(0, 16));
+
+    body.append(el("div", { className: "card", style: "margin-top:1rem" }, [
+      el("header", {}, [
+        el("h2", { textContent: `Previously from ${seen.name}` }),
+        el("span", { className: "grow" }),
+        el("span", { className: "muted", textContent: "from posted invoices only" }),
+      ]),
+      el("div", { className: "card-body" }, [
+        facts,
+        el("p", { className: "muted", style: "margin:.8rem 0 0" },
+          "Context for you, not for the reader. Anything on this invoice that "
+          + "disagrees with the above is raised as a warning at the top."),
+      ]),
+    ]));
+  }
+
   /* The item table, when the reader found one. It is read-only on purpose: the
      register takes one row per invoice, so the lines are here to check the
      total against, not to be edited into it. Editing them would imply they
