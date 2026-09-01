@@ -55,6 +55,8 @@ const ICON = {
   info: "M8 7.5v4M8 4.5v.01M14.5 8a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z",
   clock: "M8 4.5V8l2.5 1.5M14.5 8a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z",
   dot: "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z",
+  doc: "M4.5 1.8h5l3 3v9.4h-8zM9.5 1.8v3h3M6 8.5h4M6 11h2.5",
+  rupee: "M5 3h6M5 5.8h6M8.6 3c1.6 0 2.6.9 2.6 2.2 0 1.5-1.2 2.4-3 2.4H5l5.4 5.4",
 };
 
 function icon(name, size = 14) {
@@ -346,6 +348,17 @@ async function loadDocuments() {
   const counts = tally();
   setPip("#pip-inbox", counts.open, counts.needs_review ? "attention" : "ready");
   setPip("#pip-review", counts.needs_review + counts.ready, counts.needs_review ? "attention" : "ready");
+
+  /* The bell counts only what a person has to decide about - things flagged or
+     failed. Counting everything in the queue would leave a permanent badge,
+     which is the same as no badge. */
+  const attention = counts.needs_review + counts.failed;
+  const badge = $("#alerts-count");
+  badge.textContent = String(attention);
+  badge.hidden = !attention;
+  $("#btn-alerts").title = attention
+    ? `${attention} invoice${attention === 1 ? "" : "s"} need attention`
+    : "Nothing needs attention";
 }
 
 function tally() {
@@ -1314,10 +1327,29 @@ function show(name, { push = true } = {}) {
   }
   for (const id of SCREENS) $(`#screen-${id}`).hidden = id !== name;
 
-  // The period picker only means something on the two screens that read the
-  // workbook; showing it everywhere invites people to change it expecting
+  /* The page's own heading moves into the top bar, so the title sits on the
+     same line as the search and the controls. Read from the section rather
+     than kept in a second list here - a new screen brings its own words. */
+  const section = $(`#screen-${name}`);
+  const source = section ? section.querySelector("header") : null;
+  const heading = source ? source.querySelector("h1") : null;
+  const lede = source ? source.querySelector("p") : null;
+  $("#page-title").textContent = heading ? heading.textContent : "Dashboard";
+  $("#page-lede").textContent = lede ? lede.textContent : "";
+  if (source) source.hidden = true;
+
+  // A greeting belongs on the screen you land on, not on every screen.
+  if (name === "dashboard") {
+    const hour = new Date().getHours();
+    const part = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+    const who = (session.user || {}).name || "";
+    if (who) $("#page-title").textContent = `${part}, ${who.split(" ")[0]}`;
+  }
+
+  // The period picker only means something on the screens that read the
+  // workbook; offering it elsewhere invites people to change it expecting
   // something to happen.
-  $(".context").hidden = !["registers", "tax", "dashboard"].includes(name);
+  $(".topbar .field.compact").hidden = !["registers", "tax", "dashboard"].includes(name);
 
   const renderers = {
     dashboard: renderDashboard,
@@ -1370,6 +1402,24 @@ function wire() {
   });
 
   $("#btn-scan").addEventListener("click", checkWatchFolder);
+
+  /* Search from anywhere lands on History with the term already applied,
+     rather than being a second, weaker search of its own. */
+  const search = $("#global-search");
+  search.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    state.historyQuery = search.value.trim();
+    state.historyFilter = "";
+    show("history");
+  });
+
+  // The bell is a shortcut to the work, not a notification centre.
+  $("#btn-alerts").addEventListener("click", () => {
+    const counts = tally();
+    if (counts.needs_review) { state.filter = "needs_review"; show("queue"); }
+    else if (counts.failed) { state.historyFilter = "failed"; show("history"); }
+    else toast("Nothing needs your attention.", "good");
+  });
 
   $("#btn-download").addEventListener("click", () => saveWorkbook(state.period));
 
@@ -1601,14 +1651,334 @@ function statCard(value, label, tone = "") {
   ]);
 }
 
+// --------------------------------------------------------------------------- //
+// Charts
+//
+// Hand-drawn inline SVG. There is no build step and the Content-Security-Policy
+// forbids loading anything off a CDN, so a charting library was never an option
+// - which turns out to cost very little for four small figures.
+//
+// Marks follow the house rules: hairline recessive grid, thin strokes, a legend
+// or direct label wherever more than one thing is drawn, and status colour that
+// is always accompanied by a word and a number. Nothing here asks anyone to
+// compare two shapes by eye to get the answer.
+// --------------------------------------------------------------------------- //
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs = {}, children = []) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value == null) continue;
+    node.setAttribute(key, String(value));
+  }
+  for (const child of [].concat(children)) {
+    if (child) node.append(child);
+  }
+  return node;
+}
+
+/* Reads a CSS custom property so charts follow the theme rather than hard-coding
+   a colour that would be wrong in the other one. */
+function token(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+/* A sparkline: one series, no axes, no legend. The tile's own label says what it
+   is, and the exact number is right beside it - this only carries the shape. */
+function sparkline(values, { width = 68, height = 30 } = {}) {
+  const svg = svgEl("svg", {
+    width, height, viewBox: `0 0 ${width} ${height}`,
+    role: "img", "aria-label": "trend over the last 30 days", class: "spark",
+  });
+  const points = values.length ? values : [0];
+  const top = Math.max(...points, 1);
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const y = (v) => height - 3 - (v / top) * (height - 6);
+
+  const path = points.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  svg.append(svgEl("path", {
+    d: path, fill: "none", stroke: token("--viz-1", "#2a78d6"),
+    "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round",
+  }));
+  // The endpoint, direct-labelled by position rather than by a number on it.
+  svg.append(svgEl("circle", {
+    cx: (points.length - 1) * step, cy: y(points[points.length - 1]), r: 2.4,
+    fill: token("--viz-1", "#2a78d6"),
+  }));
+  return svg;
+}
+
+/* A donut, for part-to-whole at a glance. Legitimate here because the segments
+   are few and one dominates; it would be the wrong form for comparing close
+   values. The legend beside it carries the exact count and share, so the arcs
+   are the summary and never the source. */
+function donut(segments, { size = 168, thickness = 22 } = {}) {
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const radius = (size - thickness) / 2;
+  const centre = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  const surface = token("--surface", "#fff");
+
+  const svg = svgEl("svg", {
+    width: size, height: size, viewBox: `0 0 ${size} ${size}`,
+    role: "img",
+    "aria-label": total
+      ? `${total} documents: ` + segments.filter((s) => s.value)
+          .map((s) => `${s.value} ${s.label}`).join(", ")
+      : "nothing yet",
+  });
+
+  svg.append(svgEl("circle", {
+    cx: centre, cy: centre, r: radius, fill: "none",
+    stroke: token("--surface-3", "#eee"), "stroke-width": thickness,
+  }));
+
+  let offset = 0;
+  for (const segment of segments) {
+    if (!segment.value) continue;
+    const length = (segment.value / total) * circumference;
+    svg.append(svgEl("circle", {
+      cx: centre, cy: centre, r: radius, fill: "none",
+      stroke: segment.color, "stroke-width": thickness,
+      // A 2px gap of surface between neighbours, rather than a border on each.
+      "stroke-dasharray": `${Math.max(length - 2, 0.5)} ${circumference}`,
+      "stroke-dashoffset": -offset,
+      transform: `rotate(-90 ${centre} ${centre})`,
+    }));
+    offset += length;
+  }
+  // Masks the seam where the first segment starts.
+  svg.append(svgEl("circle", {
+    cx: centre, cy: centre, r: radius - thickness / 2, fill: "none",
+    stroke: surface, "stroke-width": 0,
+  }));
+
+  svg.append(svgEl("text", {
+    x: centre, y: centre - 2, "text-anchor": "middle",
+    "font-size": 26, "font-weight": 680, fill: token("--ink", "#111"),
+    "letter-spacing": "-0.02em",
+  }, document.createTextNode(String(total))));
+  svg.append(svgEl("text", {
+    x: centre, y: centre + 16, "text-anchor": "middle",
+    "font-size": 11, fill: token("--ink-3", "#777"),
+  }, document.createTextNode("documents")));
+
+  return svg;
+}
+
+/* An area chart over time, with a crosshair and tooltip. One series, so the
+   title names it and no legend is needed. */
+function areaChart(points, { height = 190 } = {}) {
+  const width = 640;                       // viewBox units; the SVG scales to fit
+  const pad = { top: 12, right: 12, bottom: 24, left: 34 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+
+  const values = points.map((p) => p.count);
+  const top = Math.max(...values, 4);
+  const niceTop = Math.ceil(top / 4) * 4;
+  const x = (i) => pad.left + (points.length > 1 ? (i / (points.length - 1)) * plotW : plotW / 2);
+  const y = (v) => pad.top + plotH - (v / niceTop) * plotH;
+
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none",
+    role: "img", "aria-label": "invoices received per day over the last 30 days",
+  });
+
+  // Hairline grid, solid - dashes read as a threshold when they are just a grid.
+  for (let step = 0; step <= 4; step += 1) {
+    const value = (niceTop / 4) * step;
+    svg.append(svgEl("line", {
+      x1: pad.left, x2: width - pad.right, y1: y(value), y2: y(value),
+      stroke: token("--viz-grid", "#eee"), "stroke-width": 1,
+    }));
+    svg.append(svgEl("text", {
+      x: pad.left - 7, y: y(value) + 3.5, "text-anchor": "end",
+      "font-size": 10, fill: token("--viz-axis", "#999"),
+    }, document.createTextNode(String(Math.round(value)))));
+  }
+
+  const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+  const accent = token("--viz-1", "#2a78d6");
+
+  const fillId = `areafill-${Math.random().toString(36).slice(2, 8)}`;
+  const gradient = svgEl("linearGradient", { id: fillId, x1: 0, y1: 0, x2: 0, y2: 1 }, [
+    svgEl("stop", { offset: "0%", "stop-color": accent, "stop-opacity": 0.22 }),
+    svgEl("stop", { offset: "100%", "stop-color": accent, "stop-opacity": 0 }),
+  ]);
+  svg.append(svgEl("defs", {}, gradient));
+  svg.append(svgEl("path", {
+    d: `${line} L${x(points.length - 1)},${pad.top + plotH} L${x(0)},${pad.top + plotH} Z`,
+    fill: `url(#${fillId})`, stroke: "none",
+  }));
+  svg.append(svgEl("path", {
+    d: line, fill: "none", stroke: accent, "stroke-width": 2,
+    "stroke-linejoin": "round", "stroke-linecap": "round",
+  }));
+
+  // A few dates only. One label per day would collide and go unread.
+  const ticks = [0, Math.floor(points.length / 3), Math.floor((points.length * 2) / 3),
+                 points.length - 1];
+  for (const i of [...new Set(ticks)]) {
+    const day = points[i];
+    if (!day) continue;
+    svg.append(svgEl("text", {
+      x: x(i), y: height - 6, "text-anchor": i === 0 ? "start"
+        : i === points.length - 1 ? "end" : "middle",
+      "font-size": 10, fill: token("--viz-axis", "#999"),
+    }, document.createTextNode(shortDate(day.date))));
+  }
+
+  const crosshair = svgEl("line", {
+    y1: pad.top, y2: pad.top + plotH, stroke: token("--viz-axis", "#999"),
+    "stroke-width": 1, opacity: 0,
+  });
+  const marker = svgEl("circle", {
+    r: 4, fill: accent, stroke: token("--surface", "#fff"), "stroke-width": 2, opacity: 0,
+  });
+  svg.append(crosshair, marker);
+
+  return { svg, x, y, points, crosshair, marker, width, pad, plotW };
+}
+
+function shortDate(iso) {
+  const [, month, day] = iso.split("-");
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${Number(day)} ${names[Number(month) - 1] || ""}`.trim();
+}
+
+/* Wraps a chart in a positioned holder and wires the hover layer. An HTML chart
+   is interactive by nature; a static one throws away the detail it already has. */
+function timeChart(points) {
+  const hold = el("div", { className: "chart-hold" });
+  const built = areaChart(points);
+  const tip = el("div", { className: "viz-tip" });
+  hold.append(built.svg, tip);
+
+  const place = (event) => {
+    const box = built.svg.getBoundingClientRect();
+    const scale = built.width / box.width;
+    const localX = (event.clientX - box.left) * scale;
+    let nearest = 0;
+    let best = Infinity;
+    for (let i = 0; i < points.length; i += 1) {
+      const distance = Math.abs(built.x(i) - localX);
+      if (distance < best) { best = distance; nearest = i; }
+    }
+    const day = points[nearest];
+    built.crosshair.setAttribute("x1", built.x(nearest));
+    built.crosshair.setAttribute("x2", built.x(nearest));
+    built.crosshair.setAttribute("opacity", 0.45);
+    built.marker.setAttribute("cx", built.x(nearest));
+    built.marker.setAttribute("cy", built.y(day.count));
+    built.marker.setAttribute("opacity", 1);
+
+    tip.textContent = `${shortDate(day.date)} · ${day.count} invoice${day.count === 1 ? "" : "s"}`;
+    tip.style.left = `${(built.x(nearest) / built.width) * box.width}px`;
+    tip.style.top = `${((built.y(day.count) / 190) * box.height)}px`;
+    tip.classList.add("on");
+  };
+
+  built.svg.addEventListener("pointermove", place);
+  built.svg.addEventListener("pointerleave", () => {
+    tip.classList.remove("on");
+    built.crosshair.setAttribute("opacity", 0);
+    built.marker.setAttribute("opacity", 0);
+  });
+  return hold;
+}
+
+/* A headline figure with its month-on-month change and a 30-day shape.
+
+   The change is omitted rather than invented when last month had nothing to
+   divide by: "+100%" against a base of zero is noise dressed as insight. */
+function kpi(label, value, { tone = "blue", glyph = "doc", change = null, spark = null } = {}) {
+  const delta = el("div", { className: "delta" });
+  if (change === null || change === undefined) {
+    delta.append(el("span", { textContent: "nothing to compare against yet" }));
+  } else if (change === 0) {
+    delta.append(el("span", { textContent: "level with the 30 days before" }));
+  } else {
+    const up = change > 0;
+    delta.append(el("span", { className: up ? "up" : "down",
+                              textContent: `${up ? "+" : ""}${change}%` }));
+    delta.append(el("span", { textContent: " vs the 30 days before" }));
+  }
+
+  return el("div", { className: "kpi" }, [
+    el("div", { className: `mark ${tone}` }, icon(glyph, 18)),
+    el("div", { className: "body" }, [
+      el("div", { className: "k", textContent: label }),
+      el("div", { className: "v", textContent: value }),
+      delta,
+    ]),
+    spark && spark.length ? sparkline(spark) : null,
+  ]);
+}
+
+const ACTIVITY_WORDS = {
+  posted: ["Posted to the workbook", "good"],
+  posted_with_override: ["Posted despite a failed check", "warn"],
+  unposted: ["Row cleared and returned to review", "warn"],
+  uploaded: ["Invoices uploaded", "good"],
+  folder_ingested: ["Picked up from the watch folder", "good"],
+  reprocess: ["Read again", ""],
+  document_deleted: ["Document removed", "warn"],
+  login: ["Signed in", ""],
+  login_failed: ["Failed sign-in", "bad"],
+  logout: ["Signed out", ""],
+  signup: ["Account created", "good"],
+  user_approved: ["Account approved", "good"],
+  user_created: ["Account added", "good"],
+  user_deleted: ["Account removed", "warn"],
+  workbook_reset: ["Workbook reset", "bad"],
+  workbook_downloaded: ["Workbook downloaded", ""],
+  settings_updated: ["Settings changed", ""],
+  password_changed: ["Password changed", ""],
+};
+
+function activityFeed(entries) {
+  if (!entries.length) {
+    return el("div", { className: "empty" }, "Nothing has happened yet.");
+  }
+  const feed = el("div", { className: "feed" });
+  for (const entry of entries) {
+    const [words, tone] = ACTIVITY_WORDS[entry.action] || [entry.action.replace(/_/g, " "), ""];
+    const glyph = tone === "good" ? "check" : tone === "bad" ? "alert"
+      : tone === "warn" ? "clock" : "dot";
+    feed.append(el("div", { className: "entry" }, [
+      el("span", { className: `dot-icon ${tone}` }, icon(glyph, 12)),
+      el("div", { className: "what" }, [
+        el("div", { textContent: words }),
+        el("div", { className: "when", textContent: whenish(entry.at) }),
+      ]),
+      el("span", { className: "who-did", textContent: entry.user_email || "" }),
+    ]));
+  }
+  return feed;
+}
+
+/* "2 minutes ago" beats a timestamp for anything within the day, and a
+   timestamp beats it for anything older. */
+function whenish(iso) {
+  if (!iso) return "";
+  const then = new Date(iso);
+  const seconds = Math.max(0, (Date.now() - then.getTime()) / 1000);
+  if (seconds < 90) return "just now";
+  if (seconds < 3600) return `${Math.round(seconds / 60)} minutes ago`;
+  if (seconds < 86400) {
+    const hours = Math.round(seconds / 3600);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  return iso.replace("T", " ").slice(0, 16);
+}
+
 async function renderDashboard() {
   const body = $("#dashboard-body");
   body.textContent = "";
-
-  const hour = new Date().getHours();
-  const part = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const who = (session.user || {}).name || "";
-  $("#dash-greeting").textContent = who ? `${part}, ${who.split(" ")[0]}` : "Dashboard";
 
   let data;
   try {
@@ -1618,24 +1988,22 @@ async function renderDashboard() {
     return;
   }
 
-  body.append(profileCard());
-
   const t = data.totals;
-  body.append(el("div", { className: "stats" }, [
-    statCard(t.all, "Invoices in total"),
-    statCard(t.processed, "Posted to the workbook", "good"),
-    statCard(t.needs_review + t.ready, "Waiting on you", (t.needs_review ? "warn" : "")),
-    statCard(t.failed, "Failed", t.failed ? "bad" : ""),
-  ]));
+  const change = (data.trend || {}).change_percent || {};
+  const arrivals = data.arrivals || [];
+  const dailyCounts = arrivals.map((point) => point.count);
 
-  // Drop target, right where someone lands.
-  const zone = el("div", { className: "dropzone", id: "dash-dropzone" }, [
-    el("div", { className: "big" }, "Drop invoices here, or click to choose files"),
-    el("div", { className: "hint" },
-      `PDF, PNG or JPG · up to ${(state.info || {}).max_upload_mb || 25} MB each`),
-  ]);
-  wireDropzone(zone);
-  body.append(zone);
+  // ---- Headline figures ----------------------------------------------------
+  body.append(el("div", { className: "kpis" }, [
+    kpi("Invoices in total", String(t.all),
+        { tone: "blue", glyph: "doc", change: change.all, spark: dailyCounts }),
+    kpi("Posted to the workbook", String(t.processed),
+        { tone: "good", glyph: "check", change: change.processed, spark: dailyCounts }),
+    kpi("Waiting on you", String(t.needs_review + t.ready),
+        { tone: "warn", glyph: "clock", change: change.needs_review }),
+    kpi("Value posted", money(t.value_posted),
+        { tone: "money", glyph: "rupee", change: change.value_posted }),
+  ]));
 
   if (t.reading) {
     body.append(alertBox("info", [
@@ -1644,22 +2012,101 @@ async function renderDashboard() {
     ]));
   }
 
-  const rows = data.recent || [];
-  const table = el("div", { className: "card" }, [
-    el("header", {}, [
-      el("h2", { textContent: "Recent invoices" }),
-      el("span", { className: "grow" }),
-      el("button", { className: "btn sm ghost", textContent: "See all",
-                     onclick: () => show("history") }),
+  // ---- Where everything sits, over time, and what just happened ------------
+  const segments = [
+    { label: "Posted", value: t.processed, color: token("--good", "#0ca30c") },
+    { label: "Ready to post", value: t.ready, color: token("--viz-1", "#2a78d6") },
+    { label: "Needs a look", value: t.needs_review, color: token("--warning", "#fab219") },
+    { label: "Failed", value: t.failed, color: token("--critical", "#d03b3b") },
+    { label: "Still reading", value: t.reading, color: token("--ink-3", "#888") },
+  ];
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+
+  const legend = el("div", { className: "donut-legend" });
+  for (const segment of segments) {
+    if (!segment.value && total) continue;
+    legend.append(el("div", { className: "row" }, [
+      el("span", { className: "swatch", style: `background:${segment.color}` }),
+      el("span", { className: "name", textContent: segment.label }),
+      el("span", { className: "count", textContent: String(segment.value) }),
+      el("span", { className: "pct",
+                   textContent: total ? `${((segment.value / total) * 100).toFixed(1)}%` : "—" }),
+    ]));
+  }
+
+  body.append(el("div", { className: "dash-grid" }, [
+    el("div", { className: "card" }, [
+      el("header", {}, [el("h2", { textContent: "Where everything sits" })]),
+      total
+        ? el("div", { className: "donut-wrap" }, [donut(segments), legend])
+        : el("div", { className: "empty" }, "No invoices yet."),
     ]),
-    rows.length
-      ? historyTable(rows, { compact: true })
-      : el("div", { className: "empty" }, [
-          el("div", { className: "big" }, "Nothing yet"),
-          "Drop an invoice above and it will be read, classified and checked.",
-        ]),
-  ]);
-  body.append(table);
+
+    el("div", { className: "card" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Invoices received" }),
+        el("span", { className: "grow" }),
+        el("span", { className: "muted", textContent: "last 30 days" }),
+      ]),
+      timeChart(arrivals),
+    ]),
+
+    el("div", { className: "card" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Recent activity" }),
+        el("span", { className: "grow" }),
+        isAdmin()
+          ? el("button", { className: "btn sm ghost", textContent: "See all",
+                           onclick: () => show("admin") })
+          : null,
+      ]),
+      activityFeed(data.activity || []),
+    ]),
+  ]));
+
+  // ---- Recent invoices, and who the value sits with ------------------------
+  const parties = el("div", { className: "parties" });
+  const biggest = Math.max(...(data.top_parties || []).map((p) => Number(p.value)), 1);
+  for (const party of data.top_parties || []) {
+    parties.append(el("div", { className: "party" }, [
+      el("div", { className: "line" }, [
+        el("span", { className: "who-name", textContent: party.name }),
+        el("span", { className: "amount", textContent: money(party.value) }),
+      ]),
+      el("div", { className: "track" },
+        el("div", { className: "fill", style: `width:${(Number(party.value) / biggest) * 100}%` })),
+      el("div", { className: "sub",
+                  textContent: `${party.invoices} invoice${party.invoices === 1 ? "" : "s"}` }),
+    ]));
+  }
+
+  const rows = data.recent || [];
+  body.append(el("div", { className: "dash-split" }, [
+    el("div", { className: "card" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Recent invoices" }),
+        el("span", { className: "grow" }),
+        el("button", { className: "btn sm ghost", textContent: "See all",
+                       onclick: () => show("history") }),
+      ]),
+      rows.length
+        ? historyTable(rows, { compact: true })
+        : el("div", { className: "empty" }, [
+            el("div", { className: "big" }, "Nothing yet"),
+            "Upload an invoice and it will be read, classified and checked.",
+          ]),
+    ]),
+    el("div", { className: "card" }, [
+      el("header", {}, [
+        el("h2", { textContent: "Largest by value" }),
+        el("span", { className: "grow" }),
+        el("span", { className: "muted", textContent: "posted only" }),
+      ]),
+      (data.top_parties || []).length
+        ? parties
+        : el("div", { className: "empty" }, "Nothing posted yet."),
+    ]),
+  ]));
 }
 
 // --------------------------------------------------------------------------- //

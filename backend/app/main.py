@@ -17,6 +17,8 @@ import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -549,6 +551,8 @@ def dashboard(user: dict = Depends(require_user)) -> dict:
     for doc in documents:
         by_source[doc.get("source", "upload")] = by_source.get(doc.get("source", "upload"), 0) + 1
 
+    value = sum(_money(d) for d in documents if d.get("status") == DocStatus.POSTED.value)
+
     return {
         "totals": {
             "all": len(documents),
@@ -557,12 +561,118 @@ def dashboard(user: dict = Depends(require_user)) -> dict:
             "needs_review": waiting,
             "ready": ready,
             "reading": in_flight,
+            "value_posted": str(value),
         },
+        # Month on month, so a figure can say whether it is going the right way.
+        "trend": _month_on_month(documents),
+        # One point per day, for the shape of the month rather than its total.
+        "arrivals": _arrivals_by_day(documents),
         "by_source": by_source,
-        "recent": [_summarise(doc) for doc in documents[:8]],
+        "top_parties": _top_parties(documents),
+        "activity": accounts.activity(8),
+        "recent": [_summarise(doc) for doc in documents[:6]],
         "periods": sorted({d["period"] for d in documents if d.get("period")},
                           key=periods.sort_key, reverse=True),
     }
+
+
+def _money(doc: dict) -> Decimal:
+    """A document's invoice total, or zero if it never got one."""
+    raw = (doc.get("treatment") or {}).get("invoice_total")
+    if raw in (None, ""):
+        return Decimal("0")
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _received_day(doc: dict) -> str | None:
+    stamp = doc.get("received_at") or ""
+    return stamp[:10] if len(stamp) >= 10 else None
+
+
+def _month_on_month(documents: list[dict]) -> dict:
+    """The last 30 days against the 30 before them, for each headline figure.
+
+    Rolling windows rather than calendar months, deliberately. Compared by
+    calendar month, every figure on this dashboard read "-100%" on the first of
+    September - arithmetically true, since the month was hours old, and useless
+    as a signal. A rolling window has the same length on every day of the year,
+    so the comparison means the same thing whenever somebody looks at it.
+
+    A percentage is omitted rather than invented when the earlier window was
+    empty: "+100%" against a base of zero says nothing.
+    """
+    today = datetime.now(UTC).date()
+    recent_from = (today - timedelta(days=29)).isoformat()
+    prior_from = (today - timedelta(days=59)).isoformat()
+
+    def tally(start: str, end: str | None) -> dict:
+        rows = [
+            d for d in documents
+            if (day := _received_day(d)) and day >= start and (end is None or day < end)
+        ]
+        return {
+            "all": len(rows),
+            "processed": len([d for d in rows if d.get("status") == DocStatus.POSTED.value]),
+            "needs_review": len([d for d in rows
+                                 if d.get("status") == DocStatus.NEEDS_REVIEW.value]),
+            "value_posted": sum(
+                (_money(d) for d in rows if d.get("status") == DocStatus.POSTED.value),
+                Decimal("0"),
+            ),
+        }
+
+    now, before = tally(recent_from, None), tally(prior_from, recent_from)
+    change: dict[str, float | None] = {}
+    for key in now:
+        was, is_now = float(before[key]), float(now[key])
+        change[key] = round((is_now - was) / was * 100, 1) if was else None
+
+    return {
+        "window_days": 30,
+        "recent": {k: str(v) for k, v in now.items()},
+        "previous": {k: str(v) for k, v in before.items()},
+        "change_percent": change,
+    }
+
+
+def _arrivals_by_day(documents: list[dict], days: int = 30) -> list[dict]:
+    """Documents received per day, oldest first, with empty days kept.
+
+    Dropping the empty days would compress the gaps and make a quiet week look
+    like a busy one.
+    """
+    today = datetime.now(UTC).date()
+    counted: dict[str, int] = {}
+    for doc in documents:
+        day = _received_day(doc)
+        if day:
+            counted[day] = counted.get(day, 0) + 1
+    return [
+        {"date": (day := (today - timedelta(days=offset)).isoformat()),
+         "count": counted.get(day, 0)}
+        for offset in range(days - 1, -1, -1)
+    ]
+
+
+def _top_parties(documents: list[dict], limit: int = 5) -> list[dict]:
+    """Who the largest posted value sits with."""
+    totals: dict[str, Decimal] = {}
+    counts: dict[str, int] = {}
+    for doc in documents:
+        if doc.get("status") != DocStatus.POSTED.value:
+            continue
+        name = (doc.get("treatment") or {}).get("counterparty_name")
+        if not name:
+            continue
+        totals[name] = totals.get(name, Decimal("0")) + _money(doc)
+        counts[name] = counts.get(name, 0) + 1
+
+    ranked = sorted(totals.items(), key=lambda pair: pair[1], reverse=True)[:limit]
+    return [{"name": name, "value": str(amount), "invoices": counts[name]}
+            for name, amount in ranked]
 
 
 def _summarise(doc: dict) -> dict:

@@ -146,20 +146,47 @@
 
   <div class="main">
 
-    <div class="context">
-      <div class="field">
-        <label for="period-picker">Return period</label>
-        <select class="control" id="period-picker"></select>
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1 id="page-title">Dashboard</h1>
+        <p id="page-lede">Where everything stands, and the quickest way to add more.</p>
       </div>
-      <span class="grow"></span>
-      <button class="btn" id="btn-download">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
-          <path d="M8 2v8m0 0L5 7m3 3 3-3M2.5 12.5h11" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        Download workbook
-      </button>
-      <div class="segmented" id="theme-switch" role="group" aria-label="Colour theme"></div>
-      <button class="btn ghost" id="btn-reset" title="Discard posted rows and start this period again">Reset</button>
+
+      <div class="topbar-tools">
+        <label class="search-box">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.5" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 4 4" stroke-linecap="round"/>
+          </svg>
+          <input type="search" id="global-search" placeholder="Search invoices, parties…"
+                 aria-label="Search invoices and parties">
+        </label>
+
+        <div class="field compact">
+          <label for="period-picker">Period</label>
+          <select class="control" id="period-picker"></select>
+        </div>
+
+        <button class="icon-btn" id="btn-alerts" aria-label="What needs attention">
+          <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor"
+               stroke-width="1.5" aria-hidden="true">
+            <path d="M8 2.5a4 4 0 0 1 4 4v2.2l1 2.05H3l1-2.05V6.5a4 4 0 0 1 4-4z"
+                  stroke-linejoin="round"/>
+            <path d="M6.5 12.8a1.6 1.6 0 0 0 3 0" stroke-linecap="round"/>
+          </svg>
+          <span class="badge" id="alerts-count" hidden>0</span>
+        </button>
+
+        <div class="segmented" id="theme-switch" role="group" aria-label="Colour theme"></div>
+
+        <button class="btn" id="btn-download">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+            <path d="M8 2v8m0 0L5 7m3 3 3-3M2.5 12.5h11" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Workbook
+        </button>
+        <button class="btn ghost" id="btn-reset" title="Discard posted rows and start this period again">Reset</button>
+      </div>
     </div>
 
     <!-- Shown only when the configured reader could not be reached, so that

@@ -823,3 +823,185 @@ table.grid.log code {
   background: var(--accent-soft); color: var(--accent-ink);
 }
 .role-chip.admin { background: var(--warning-soft); color: var(--warning); }
+
+
+/* =========================================================================
+   Chart marks.
+
+   Kept separate from the UI accent on purpose. The accent is chosen so white
+   text sits on it legibly; a chart mark is chosen to sit in a lightness band
+   beside its neighbours and clear a chroma floor. Run through the dataviz
+   palette validator: the old navy failed both as a series colour (lightness
+   0.414, chroma 0.088 - it reads grey once it is a mark rather than a button).
+   ========================================================================= */
+
+:root {
+  --viz-1: #2a78d6;
+  --viz-grid: #eaeef4;
+  --viz-axis: #9aa4b2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --viz-1: #6ba8ec; --viz-grid: #232c3f; --viz-axis: #6b7688;
+  }
+}
+:root[data-theme="dark"] { --viz-1: #6ba8ec; --viz-grid: #232c3f; --viz-axis: #6b7688; }
+
+/* =========================================================================
+   Top bar - the page's own title, plus the controls that apply everywhere
+   ========================================================================= */
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: flex-start; gap: 1.2rem; flex-wrap: wrap;
+  padding: 1.15rem 1.6rem 1rem;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.topbar-title { flex: 1 1 18rem; min-width: 0; }
+.topbar-title h1 {
+  margin: 0; font-size: 1.55rem; font-weight: 680;
+  letter-spacing: -0.022em; line-height: 1.15;
+}
+.topbar-title p { margin: 0.25rem 0 0; color: var(--ink-3); font-size: 0.86rem; max-width: 62ch; }
+.topbar-tools { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.topbar .field.compact { display: flex; align-items: center; gap: 0.35rem; }
+.topbar .field.compact label { font-size: 0.74rem; color: var(--ink-3); }
+
+.search-box {
+  display: flex; align-items: center; gap: 0.45rem;
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: 999px; padding: 0.3rem 0.8rem; color: var(--ink-3);
+  min-width: 12rem; max-width: 20rem; flex: 1 1 12rem;
+}
+.search-box:focus-within { border-color: var(--accent); color: var(--accent); }
+.search-box input {
+  border: 0; background: none; outline: none; color: var(--ink);
+  font-size: 0.85rem; width: 100%; padding: 0.15rem 0;
+}
+
+.icon-btn {
+  position: relative; display: grid; place-items: center;
+  width: 2.1rem; height: 2.1rem; flex: none;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink-2); cursor: pointer;
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--ink); }
+.icon-btn .badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 1.05rem; height: 1.05rem; padding: 0 0.22rem;
+  border-radius: 999px; background: var(--critical); color: #fff;
+  font-size: 0.64rem; font-weight: 700;
+  display: grid; place-items: center; border: 2px solid var(--surface);
+}
+
+/* =========================================================================
+   Dashboard
+   ========================================================================= */
+
+.kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.8rem; margin-bottom: 0.9rem;
+}
+.kpi {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-sm);
+  padding: 0.95rem 1.05rem; display: flex; gap: 0.85rem; align-items: flex-start;
+}
+.kpi .mark {
+  width: 2.6rem; height: 2.6rem; flex: none;
+  border-radius: 10px; display: grid; place-items: center;
+}
+.kpi .mark.blue  { background: var(--accent-soft);  color: var(--accent-ink); }
+.kpi .mark.good  { background: var(--good-soft);    color: var(--good); }
+.kpi .mark.warn  { background: var(--warning-soft); color: var(--warning); }
+.kpi .mark.money { background: var(--surface-3);    color: var(--ink-2); }
+.kpi .body { flex: 1; min-width: 0; }
+.kpi .k { font-size: 0.78rem; color: var(--ink-3); }
+.kpi .v {
+  font-size: 1.5rem; font-weight: 680; letter-spacing: -0.025em; line-height: 1.15;
+  font-variant-numeric: tabular-nums; margin-top: 0.1rem;
+}
+.kpi .delta { font-size: 0.74rem; margin-top: 0.15rem; color: var(--ink-3); }
+.kpi .delta .up   { color: var(--good); font-weight: 650; }
+.kpi .delta .down { color: var(--critical); font-weight: 650; }
+.kpi .spark { flex: none; align-self: center; }
+
+.dash-grid {
+  display: grid; gap: 0.8rem; margin-bottom: 0.9rem;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.4fr) minmax(0, 1fr);
+}
+.dash-split {
+  display: grid; gap: 0.8rem;
+  grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+}
+@media (max-width: 1200px) {
+  .dash-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .dash-grid > :last-child { grid-column: 1 / -1; }
+  .dash-split { grid-template-columns: 1fr; }
+}
+@media (max-width: 780px) { .dash-grid { grid-template-columns: 1fr; } }
+
+/* The donut, and the legend that makes it readable.
+   The legend carries the exact count and share for every segment, so nothing
+   here rests on comparing two arcs by eye. That is also what makes the amber
+   status colour safe at its documented sub-3:1 contrast: colour never carries
+   the meaning alone. */
+.donut-wrap {
+  display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; padding: 0.9rem 1.1rem 1.1rem;
+}
+.donut-wrap svg { flex: none; }
+.donut-legend { display: flex; flex-direction: column; gap: 0.55rem; min-width: 9rem; flex: 1; }
+.donut-legend .row {
+  display: grid; grid-template-columns: 0.62rem 1fr auto; gap: 0.5rem;
+  align-items: baseline; font-size: 0.83rem;
+}
+.donut-legend .swatch { width: 0.62rem; height: 0.62rem; border-radius: 2px; }
+.donut-legend .name { color: var(--ink-2); }
+.donut-legend .count { font-variant-numeric: tabular-nums; font-weight: 640; }
+.donut-legend .pct {
+  grid-column: 2 / -1; font-size: 0.73rem; color: var(--ink-3); margin-top: -0.25rem;
+}
+
+.chart-hold { position: relative; padding: 0.6rem 1.1rem 1rem; }
+.chart-hold svg { display: block; width: 100%; height: auto; }
+.viz-tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.1s;
+  background: var(--ink); color: var(--surface); font-size: 0.76rem;
+  padding: 0.3rem 0.5rem; border-radius: var(--radius-sm);
+  white-space: nowrap; transform: translate(-50%, -135%); z-index: 5;
+}
+.viz-tip.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .viz-tip { transition: none; } }
+
+.feed { display: flex; flex-direction: column; }
+.feed .entry {
+  display: grid; grid-template-columns: 1.6rem 1fr auto; gap: 0.6rem;
+  padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
+  font-size: 0.84rem; align-items: start;
+}
+.feed .entry:last-child { border-bottom: 0; }
+.feed .dot-icon {
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2);
+}
+.feed .dot-icon.good { background: var(--good-soft); color: var(--good); }
+.feed .dot-icon.warn { background: var(--warning-soft); color: var(--warning); }
+.feed .dot-icon.bad  { background: var(--critical-soft); color: var(--critical); }
+.feed .what { min-width: 0; }
+.feed .when { font-size: 0.74rem; color: var(--ink-3); margin-top: 0.1rem; }
+.feed .who-did { font-size: 0.74rem; color: var(--ink-3); white-space: nowrap; }
+
+.parties { display: flex; flex-direction: column; gap: 0.85rem; padding: 0.9rem 1.1rem 1.1rem; }
+.party .line { display: flex; justify-content: space-between; gap: 0.8rem; font-size: 0.85rem; }
+.party .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party .amount { font-variant-numeric: tabular-nums; font-weight: 640; white-space: nowrap; }
+.party .track {
+  height: 6px; border-radius: 999px; background: var(--surface-3); margin-top: 0.35rem;
+}
+.party .fill { height: 100%; border-radius: 999px; background: var(--viz-1); }
+.party .sub { font-size: 0.73rem; color: var(--ink-3); margin-top: 0.2rem; }
+
+@media (max-width: 780px) {
+  .topbar { position: static; padding: 1rem 1rem 0.85rem; }
+  .search-box { min-width: 0; }
+}
