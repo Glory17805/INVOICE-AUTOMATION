@@ -246,13 +246,20 @@ def ready() -> JSONResponse:
     # Not being able to reach the model is degraded, not down: the offline
     # reader still captures documents, so this must not fail a health gate.
     provider = extraction_provider()
-    last = runtime.last_read(provider, has_credentials())
+    credentialed = has_credentials()
+    last = runtime.last_read(provider, credentialed)
     fell_back = bool(last and last.get("reader") == "heuristic")
+
+    # Absent credentials is degraded on its own, without waiting for a read to
+    # prove it. Keying this off fell_back alone reported a perfectly healthy
+    # reader on a fresh install with no key set - true only until the first
+    # upload, and precisely when someone checking readiness wants to be told.
     checks["reader"] = {
         "ok": True,
-        "degraded": fell_back,
-        "detail": f"{provider}, credentials "
-                  f"{'present' if has_credentials() else 'absent'}"
+        "degraded": fell_back or not credentialed,
+        "detail": f"{provider}, credentials {'present' if credentialed else 'absent'}"
+                  + ("" if credentialed else
+                     " - documents will be captured by the offline reader until a key is set")
                   + (f"; last read fell back ({last.get('note') or 'no reason recorded'})"
                      if fell_back else ""),
     }
