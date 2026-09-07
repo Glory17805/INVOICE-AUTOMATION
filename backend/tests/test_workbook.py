@@ -406,3 +406,60 @@ def test_an_unreadable_formula_scores_zero_rather_than_guessing(fresh_workbook):
     )
     values = workbook.read_register(DocumentType.SALES, PERIOD)[0]["values"]
     assert values["IGST"] == "0.00"
+
+
+# --------------------------------------------------------------------------- #
+# Downloading every period at once
+# --------------------------------------------------------------------------- #
+
+def test_all_periods_download_as_one_file_per_period(fresh_workbook, monkeypatch):
+    """The bundle holds each period separately, not merged into one workbook.
+
+    Merging would produce a file matching no return that can be filed: every
+    period carries its own totals and its own tax position.
+    """
+    import io
+    import zipfile
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app import accounts, main
+
+    workbook.ensure_working_copy("Jun-26")
+    workbook.ensure_working_copy("Jul-26")
+
+    recorded = []
+    monkeypatch.setattr(accounts, "record",
+                        lambda user, action, detail=None: recorded.append((action, detail)))
+
+    app = FastAPI()
+    app.get("/api/workbook/download-all")(
+        lambda: main.download_all_workbooks(user={"id": "u", "email": "a@b.com"}))
+
+    response = TestClient(app).get("/api/workbook/download-all")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+        names = sorted(bundle.namelist())
+        assert names == sorted(f"Ira Innovations GST {p}.xlsx"
+                               for p in workbook.available_periods())
+        # Every entry is a real workbook, not an empty placeholder.
+        for name in names:
+            with bundle.open(name) as member:
+                assert load_workbook(io.BytesIO(member.read())).sheetnames
+
+    assert recorded and recorded[0][0] == "workbook_downloaded"
+    assert recorded[0][1]["period"] == "all"
+
+
+def test_all_periods_download_refuses_when_there_is_nothing(monkeypatch):
+    from fastapi import HTTPException
+
+    from app import main
+
+    monkeypatch.setattr(workbook, "available_periods", list)
+    with pytest.raises(HTTPException) as raised:
+        main.download_all_workbooks(user={"id": "u", "email": "a@b.com"})
+    assert raised.value.status_code == 404

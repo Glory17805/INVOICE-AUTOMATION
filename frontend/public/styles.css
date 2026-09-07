@@ -146,25 +146,11 @@ svg { flex: none; }
 .brand .name { font-size: 0.95rem; font-weight: 650; letter-spacing: -0.01em; }
 .brand .gstin { font-family: var(--mono); font-size: 0.7rem; color: var(--ink-3); margin-top: 0.15rem; }
 
-.nav { padding: 0.6rem 0.5rem; display: flex; flex-direction: column; gap: 0.1rem; flex: 1; }
-.nav button {
-  display: flex; align-items: center; gap: 0.6rem;
-  width: 100%; text-align: left; background: none; border: none; cursor: pointer;
-  padding: 0.55rem 0.65rem; border-radius: var(--radius-sm);
-  color: var(--ink-2); font-size: 0.875rem;
-}
-.nav button:hover { background: var(--surface-3); color: var(--ink); }
-.nav button[aria-current="page"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
-.nav button .label { flex: 1; }
-.nav .pip {
-  min-width: 1.25rem; height: 1.25rem; padding: 0 0.35rem;
-  border-radius: 99px; background: var(--surface-3); color: var(--ink-2);
-  font-size: 0.72rem; font-weight: 650;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.nav .pip.attention { background: var(--critical); color: #fff; }
-.nav .pip.ready { background: var(--accent); color: #fff; }
-.nav .pip:empty, .nav .pip[data-zero="true"] { display: none; }
+/* The nav is styled with the InvoiceFlow shell further down this sheet. The
+   original block that sat here declared the same nine selectors and was
+   overridden in full by it, so it has been removed rather than left reading as
+   though it were in charge. The .sidebar-foot rules below are still live: the
+   later block does not re-declare the status dot or the footer's text. */
 
 .sidebar-foot { padding: 0.85rem 1.15rem; border-top: 1px solid var(--line); font-size: 0.76rem; color: var(--ink-3); }
 .sidebar-foot .row { display: flex; align-items: center; gap: 0.4rem; }
@@ -573,11 +559,6 @@ tfoot td {
    Sidebar additions
    ========================================================================= */
 
-.nav-group {
-  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--ink-3); padding: 0.9rem 0.75rem 0.3rem;
-}
-.nav-group:first-child { padding-top: 0.2rem; }
 
 .sidebar-foot .who {
   display: flex; align-items: center; gap: 0.55rem; width: 100%;
@@ -863,7 +844,31 @@ table.grid.log code {
   letter-spacing: -0.022em; line-height: 1.15;
 }
 .topbar-title p { margin: 0.25rem 0 0; color: var(--ink-3); font-size: 0.86rem; max-width: 62ch; }
-.topbar-tools { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.topbar-tools { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; position: relative; }
+
+/* One panel, shared by the topbar buttons that open a list. Anchored to the
+   tools rather than the button so it cannot be pushed off-screen on a narrow
+   window, and capped in height so a long list scrolls inside itself instead of
+   growing past the viewport. */
+.popover {
+  position: absolute; top: calc(100% + 0.5rem); right: 0; z-index: 60;
+  width: min(360px, calc(100vw - 2rem));
+  max-height: min(60vh, 460px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: var(--shadow-lg);
+}
+.popover > header {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.popover > header h2 { margin: 0; font-size: 0.9rem; font-weight: 650; }
+.popover > header .muted { font-size: 0.76rem; color: var(--ink-3); }
+.popover .body { padding: 0.35rem 0; }
+.popover .empty { padding: 1.6rem 1rem; }
+.popover .feed-item { padding-left: 0.9rem; padding-right: 0.9rem; }
+.icon-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent-ink); }
 .topbar .field.compact { display: flex; align-items: center; gap: 0.35rem; }
 .topbar .field.compact label { font-size: 0.74rem; color: var(--ink-3); }
 
@@ -928,15 +933,15 @@ table.grid.log code {
 
 .dash-grid {
   display: grid; gap: 0.8rem; margin-bottom: 0.9rem;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
 }
+.card.span-row { grid-column: 1 / -1; }
+
 .dash-split {
   display: grid; gap: 0.8rem;
   grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
 }
 @media (max-width: 1200px) {
-  .dash-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .dash-grid > :last-child { grid-column: 1 / -1; }
   .dash-split { grid-template-columns: 1fr; }
 }
 @media (max-width: 780px) { .dash-grid { grid-template-columns: 1fr; } }

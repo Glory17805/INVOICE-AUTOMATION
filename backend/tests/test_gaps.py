@@ -336,3 +336,36 @@ def test_hsts_is_sent_when_a_proxy_reports_tls(client_with_a_broken_route):
         "/api/health", headers={"x-forwarded-proto": "https"}
     ).headers
     assert "max-age=31536000" in headers["Strict-Transport-Security"]
+
+
+# --------------------------------------------------------------------------- #
+# The dashboard feed shows invoice events; the audit trail keeps everything
+# --------------------------------------------------------------------------- #
+
+def test_the_dashboard_feed_excludes_sign_in_noise():
+    """Six failed sign-ins against four uploads crowded out the thing the feed
+    exists to show. Filtering is a view concern - nothing stops being recorded."""
+    from app import accounts
+
+    for action in ("login", "login_failed", "logout", "signup",
+                   "settings_updated", "profile_updated"):
+        assert action not in accounts.DOCUMENT_ACTIONS, action
+    for action in ("uploaded", "posted", "document_deleted", "posted_with_override"):
+        assert action in accounts.DOCUMENT_ACTIONS, action
+
+
+def test_the_audit_trail_still_records_and_returns_everything():
+    """The compliance property: every action against the workbook is attributable,
+    and sign-ins remain visible to an administrator."""
+    from app import accounts
+
+    accounts.record(None, "login_failed", {"email": "someone@example.test"})
+    accounts.record(None, "uploaded", {"count": 1})
+
+    unfiltered = {row["action"] for row in accounts.activity(200)}
+    assert "login_failed" in unfiltered, "the audit trail must not lose sign-in events"
+    assert "uploaded" in unfiltered
+
+    filtered = {row["action"] for row in accounts.activity(200, accounts.DOCUMENT_ACTIONS)}
+    assert "login_failed" not in filtered
+    assert "uploaded" in filtered

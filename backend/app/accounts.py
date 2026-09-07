@@ -484,10 +484,44 @@ def prune_activity(keep_days: int = 400) -> int:
         return 0
 
 
-def activity(limit: int = 100) -> list[dict]:
+# What the dashboard's activity feed is for: what happened to invoices. Sign-ins,
+# failed sign-ins, signups and settings changes are all recorded and all stay in
+# the audit trail - they are simply not what someone opening the dashboard is
+# looking for, and at six failed sign-ins to four uploads they crowded out the
+# thing the feed exists to show.
+DOCUMENT_ACTIONS = (
+    "uploaded",
+    "posted",
+    "posted_with_override",
+    "document_deleted",
+    "unposted",
+    "revised",
+    "reprocess",
+    "folder_ingested",
+    "period_reset",
+    "workbook_downloaded",
+)
+
+
+def activity(limit: int = 100, actions: tuple[str, ...] | None = None) -> list[dict]:
+    """The audit trail, newest first.
+
+    `actions` narrows it to particular event types. Passing None returns
+    everything, which is what the Audit screen wants - the filtering here is a
+    view concern, and nothing is ever excluded from what gets recorded.
+    """
+    capped = max(1, min(limit, 500))
     with db.LOCK, db.connect() as c:
-        rows = c.execute(
-            "SELECT at, user_email, action, detail FROM activity ORDER BY id DESC LIMIT ?",
-            (max(1, min(limit, 500)),),
-        ).fetchall()
+        if actions:
+            marks = ",".join("?" for _ in actions)
+            rows = c.execute(
+                f"SELECT at, user_email, action, detail FROM activity "
+                f"WHERE action IN ({marks}) ORDER BY id DESC LIMIT ?",
+                (*actions, capped),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT at, user_email, action, detail FROM activity ORDER BY id DESC LIMIT ?",
+                (capped,),
+            ).fetchall()
     return [dict(row) for row in rows]

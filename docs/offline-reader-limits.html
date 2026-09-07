@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>What the Offline Reader Misses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+  /* ---------------------------------------------------------------------
+     Palette: a columnar accounting pad. Off-white biased green rather than
+     grey, ledger-teal for structure, and three semantic severities that stay
+     distinct from the accent.
+     --------------------------------------------------------------------- */
+  :root {
+    --paper:      #F6F8F7;
+    --surface:    #FFFFFF;
+    --surface-2:  #EEF3F1;
+    --ink:        #0E1D1B;
+    --ink-2:      #3B4E4A;
+    --ink-3:      #6C807B;
+    --rule:       #D2DDD9;
+    --rule-soft:  #E4ECE9;
+
+    --accent:     #0A6357;
+    --accent-ink: #084A41;
+    --accent-bg:  #E2EFEC;
+
+    --critical:    #992427;
+    --critical-bg: #F7E7E6;
+    --caution:     #8F5510;
+    --caution-bg:  #F8EEDF;
+    --clear:       #2C6642;
+    --clear-bg:    #E3F0E7;
+
+    --shadow: 0 1px 2px rgba(14, 29, 27, .05), 0 8px 24px -16px rgba(14, 29, 27, .28);
+    --accent-line: #9BC7BF;
+
+    --measure: 68ch;
+    --display: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+    --body: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0C1211;
+      --surface:    #131D1B;
+      --surface-2:  #182422;
+      --ink:        #E5EBE9;
+      --ink-2:      #B3C2BE;
+      --ink-3:      #7D8F8B;
+      --rule:       #2A3A37;
+      --rule-soft:  #1F2C2A;
+
+      --accent:     #58C2AE;
+      --accent-ink: #8FD9CB;
+      --accent-bg:  #16302C;
+
+      --critical:    #E8837F;
+      --critical-bg: #331B1C;
+      --caution:     #D9A25C;
+      --caution-bg:  #2E2317;
+      --clear:       #7BC195;
+      --clear-bg:    #16291D;
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px -18px rgba(0, 0, 0, .8);
+      --accent-line: #2E5F58;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0C1211;
+    --surface:    #131D1B;
+    --surface-2:  #182422;
+    --ink:        #E5EBE9;
+    --ink-2:      #B3C2BE;
+    --ink-3:      #7D8F8B;
+    --rule:       #2A3A37;
+    --rule-soft:  #1F2C2A;
+
+    --accent:     #58C2AE;
+    --accent-ink: #8FD9CB;
+    --accent-bg:  #16302C;
+
+    --critical:    #E8837F;
+    --critical-bg: #331B1C;
+    --caution:     #D9A25C;
+    --caution-bg:  #2E2317;
+    --clear:       #7BC195;
+    --clear-bg:    #16291D;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px -18px rgba(0, 0, 0, .8);
+    --accent-line: #2E5F58;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  /* ---- Masthead ------------------------------------------------------- */
+
+  .masthead { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .715rem;
+    font-weight: 500;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(2.2rem, 5.2vw, 3.35rem);
+    font-weight: 500;
+    line-height: 1.08;
+    letter-spacing: -.021em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-family: var(--display);
+    font-size: clamp(1.06rem, 2.1vw, 1.28rem);
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: var(--measure);
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  .provenance {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1.4rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--ink-3);
+  }
+  .provenance b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---- Scoreboard ----------------------------------------------------- */
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 1.15rem 1.2rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+  }
+  .stat .n {
+    font-family: var(--mono);
+    font-size: 1.85rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.03em;
+  }
+  .stat .n.good { color: var(--clear); }
+  .stat .n.bad  { color: var(--critical); }
+  .stat .k {
+    font-size: .78rem;
+    color: var(--ink-3);
+    line-height: 1.4;
+  }
+
+  /* ---- Sections ------------------------------------------------------- */
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .band-head { display: flex; flex-direction: column; gap: .55rem; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: clamp(1.5rem, 3vw, 1.95rem);
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -.014em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .band-note {
+    color: var(--ink-2);
+    max-width: var(--measure);
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  /* ---- Finding cards --------------------------------------------------- */
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--sev, var(--rule));
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 1.35rem 1.45rem 1.45rem;
+    display: flex;
+    flex-direction: column;
+    gap: .85rem;
+  }
+  .finding.critical { --sev: var(--critical); }
+  .finding.caution  { --sev: var(--caution); }
+  .finding.clear    { --sev: var(--clear); }
+
+  .finding-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  h3 {
+    font-family: var(--body);
+    font-size: 1.06rem;
+    font-weight: 700;
+    letter-spacing: -.008em;
+    margin: 0;
+    line-height: 1.3;
+  }
+
+  .finding p {
+    margin: 0;
+    color: var(--ink-2);
+    max-width: var(--measure);
+    text-wrap: pretty;
+  }
+  .finding p + p { margin-top: -.15rem; }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: .675rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    padding: .26rem .58rem;
+    border-radius: 2px;
+    white-space: nowrap;
+    flex: none;
+  }
+  .chip.critical { background: var(--critical-bg); color: var(--critical); }
+  .chip.caution  { background: var(--caution-bg);  color: var(--caution); }
+  .chip.clear    { background: var(--clear-bg);    color: var(--clear); }
+  .chip.fixed    { background: var(--accent-bg);   color: var(--accent-ink); }
+
+  /* ---- Evidence blocks -------------------------------------------------- */
+
+  .evidence {
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .evidence-label {
+    font-family: var(--mono);
+    font-size: .67rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: .5rem .85rem;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .evidence pre {
+    margin: 0;
+    padding: .85rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: .765rem;
+    line-height: 1.65;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .evidence .hit  { color: var(--critical); font-weight: 700; }
+  .evidence .ok   { color: var(--clear); font-weight: 700; }
+  .evidence .dim  { color: var(--ink-3); }
+  .evidence .lbl  { color: var(--accent); }
+
+  /* ---- Tables ---------------------------------------------------------- */
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 3px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    font-size: .865rem;
+  }
+  caption {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: .67rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: .6rem .9rem;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+  }
+  th, td {
+    text-align: left;
+    padding: .62rem .9rem;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    font-size: .715rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.res { font-family: var(--mono); font-size: .79rem; color: var(--critical); white-space: nowrap; }
+
+  /* ---- Verdict panel ---------------------------------------------------- */
+
+  .verdict {
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    padding: 1.5rem 1.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: .85rem;
+  }
+  .verdict h2 { font-size: 1.35rem; }
+  .verdict p { margin: 0; color: var(--ink-2); max-width: var(--measure); text-wrap: pretty; }
+  .verdict strong { color: var(--ink); font-weight: 600; }
+
+  ul.plain {
+    margin: 0;
+    padding-left: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    color: var(--ink-2);
+    max-width: var(--measure);
+  }
+  ul.plain::marker { color: var(--ink-3); }
+  ul.plain strong { color: var(--ink); font-weight: 600; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 2px;
+    padding: .08em .34em;
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.2rem;
+    font-family: var(--mono);
+    font-size: .73rem;
+    color: var(--ink-3);
+    line-height: 1.7;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .finding { transition: box-shadow .18s ease; }
+  }
+</style>
+
+<style>
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Extraction audit &middot; Ira Innovations GST</div>
+    <h1>What the offline reader misses</h1>
+    <p class="standfirst">
+      With no LLM configured, invoices are read by parsing the PDF's text layer. On the
+      one vendor template in use today that works almost perfectly. This is an account of
+      everything else &mdash; measured, not estimated.
+    </p>
+    <div class="provenance">
+      <span><b>Method</b> every archived invoice, replayed through the reader</span>
+      <span><b>Corpus</b> 19 distinct real invoices</span>
+      <span><b>Plus</b> 6 constructed invoice shapes</span>
+      <span><b>Date</b> 7 Sep 2026</span>
+    </div>
+  </header>
+
+  <div class="board">
+    <div class="stat">
+      <span class="n good">12<span style="color:var(--ink-3);font-weight:400">/12</span></span>
+      <span class="k">fields read on the current template, on all 19 invoices</span>
+    </div>
+    <div class="stat">
+      <span class="n bad">0</span>
+      <span class="k">characters recovered from any scan or photograph</span>
+    </div>
+    <div class="stat">
+      <span class="n bad">2</span>
+      <span class="k">ways it was silently wrong &mdash; both now fixed</span>
+    </div>
+    <div class="stat">
+      <span class="n good">1</span>
+      <span class="k">invoice template it has ever been tested against in the wild</span>
+    </div>
+  </div>
+
+  <section>
+    <div class="band-head">
+      <h2>What already works</h2>
+      <p class="band-note">
+        All 19 archived invoices come from the same billing software. Against that layout
+        the reader recovers every field that carries information. Four come back empty on
+        every invoice, and all four are <em>correctly</em> empty.
+      </p>
+    </div>
+
+    <div class="evidence">
+      <div class="evidence-label">19 distinct invoices &middot; fields left blank</div>
+<pre>  invoice_number        <span class="ok">0</span>          recipient_gstin      <span class="dim">19  B2C sale, none exists</span>
+  invoice_date          <span class="ok">0</span>          gst_rate_percent     <span class="dim">19  left for the rules engine</span>
+  supplier_name         <span class="ok">0</span>          igst_amount          <span class="dim">19  intra-state, none exists</span>
+  supplier_gstin        <span class="ok">0</span>          document_type        <span class="dim">19  derived downstream</span>
+  recipient_name        <span class="ok">0</span>
+  place_of_supply       <span class="ok">0</span>
+  hsn_sac               <span class="ok">0</span>
+  taxable_value         <span class="ok">0</span>
+  cgst_amount           <span class="ok">0</span>
+  sgst_amount           <span class="ok">0</span>
+  total_amount          <span class="ok">0</span>
+  quantity              <span class="ok">0</span></pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="band-head">
+      <h2>Reads nothing at all</h2>
+      <p class="band-note">
+        Two whole categories of input produce an empty document. Both are caught before
+        anything can be posted, and both say so plainly on screen.
+      </p>
+    </div>
+
+    <div class="finding critical">
+      <div class="finding-head">
+        <h3>Scans and photographs</h3>
+        <span class="chip critical">No workaround offline</span>
+      </div>
+      <p>
+        There is no OCR anywhere in the system. Every image format returns zero characters,
+        as does a PDF that is a scan rather than generated text. The upload screen
+        <em>accepts</em> <code>.png</code>, <code>.jpg</code>, <code>.gif</code> and
+        <code>.webp</code>, so a photograph of a bill can be uploaded and comes back
+        completely blank.
+      </p>
+      <div class="evidence">
+        <div class="evidence-label">a 1&times;1 PNG and a text-free PDF, through the reader</div>
+<pre>bill.png   text layer: <span class="hit">0</span> chars   fields read: <span class="hit">NONE</span>
+scan.pdf   text layer: <span class="hit">0</span> chars   fields read: <span class="hit">NONE</span>
+
+note: "This file has no text layer - it is probably a scan."
+blocks posting on <span class="ok">7</span> separate counts</pre>
+      </div>
+    </div>
+
+    <div class="finding critical">
+      <div class="finding-head">
+        <h3>Invoices that print the label and value on one line</h3>
+        <span class="chip critical">Common layout</span>
+      </div>
+      <p>
+        The reader assumes a label sits on one line and its value on the next &mdash; the
+        shape this vendor's software emits. A great many billing systems instead print
+        <code>Invoice No: INV-118&nbsp;&nbsp;&nbsp;&nbsp;Date: 12-Jul-2026</code> on a
+        single line. Almost nothing survives that.
+      </p>
+      <p>
+        It also recognises only a fixed vocabulary of labels. &ldquo;Invoice No.&rdquo; and
+        &ldquo;Invoice Number&rdquo; are understood; &ldquo;Bill No&rdquo;,
+        &ldquo;Invoice&nbsp;#&rdquo; and &ldquo;Tax Invoice No&rdquo; are not.
+      </p>
+      <div class="evidence">
+        <div class="evidence-label">same-line layout &middot; what came back</div>
+<pre><span class="lbl">supplier_gstin</span>    37AAACS1234F1Z5   <span class="dim">caught by raw pattern match</span>
+<span class="lbl">invoice_number</span>    <span class="hit">&mdash;</span>
+<span class="lbl">invoice_date</span>      <span class="hit">&mdash;</span>
+<span class="lbl">recipient_name</span>    <span class="hit">&mdash;</span>
+<span class="lbl">place_of_supply</span>   <span class="hit">&mdash;</span>
+<span class="lbl">taxable_value</span>     <span class="hit">&mdash;</span>
+<span class="lbl">cgst / sgst</span>       <span class="hit">&mdash;</span>
+<span class="lbl">total_amount</span>      <span class="hit">&mdash;</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="band-head">
+      <h2>Reads the header, loses every figure</h2>
+      <p class="band-note">
+        The totals block is only trusted when its own arithmetic closes to within five
+        paise. That check is what stops the reader inventing numbers &mdash; but any extra
+        line on the invoice breaks the sum, and the whole block is discarded.
+      </p>
+    </div>
+
+    <div class="finding caution">
+      <div class="finding-head">
+        <h3>One extra line on the bill and the money goes blank</h3>
+        <span class="chip caution">Fails safe</span>
+      </div>
+      <p>
+        Invoice number, date and party name still read. Every amount comes back empty, and
+        posting is blocked on the missing taxable value.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <caption>constructed invoices, otherwise identical to the working template</caption>
+          <thead>
+            <tr><th>Invoice carries</th><th>Amounts recovered</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>A round-off line</td><td class="res">none</td></tr>
+            <tr><td>Freight or packing charges</td><td class="res">none</td></tr>
+            <tr><td>A discount line</td><td class="res">none</td></tr>
+            <tr><td>Cess</td><td class="res">none</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Cess deserves its own mention: it is never read under any circumstances &mdash; the
+        field is hard-coded to null &mdash; and its presence also breaks the arithmetic
+        check that would otherwise have given you the rest of the figures.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="band-head">
+      <h2>Read wrong, and nothing said so</h2>
+      <p class="band-note">
+        These two mattered most. Both produced plausible figures that passed every check in
+        the system and would have posted to the workbook clean. Both are now caught.
+      </p>
+    </div>
+
+    <div class="finding critical">
+      <div class="finding-head">
+        <h3>Invoices carrying more than one tax rate were flattened into one</h3>
+        <span class="chip fixed">Fixed</span>
+      </div>
+      <p>
+        A bill with rice at 5% and pipes at 18% was read as a single taxable value and a
+        single tax figure. The two agree with each other perfectly, so the arithmetic check
+        passed. Only the rate implied by dividing one by the other gives it away:
+        <strong>13.67%, which is not a GST rate that exists.</strong>
+      </p>
+      <p>
+        The fix adds a check that the derived rate is one of the seven statutory slabs,
+        with half a percentage point of tolerance &mdash; wide enough to absorb an invoice's
+        own rounding, narrow enough that two different slabs averaged together cannot land
+        inside it.
+      </p>
+      <div class="evidence">
+        <div class="evidence-label">5% and 18% goods on one bill</div>
+<pre>read as : taxable 3000.00   CGST 205.00   SGST 205.00   &rarr; rate 13.67%
+truth   : two rows &mdash; 1000 @ 5% and 2000 @ 18%
+
+before  : blocks <span class="hit">*** NOTHING ***</span>
+after   : blocks <span class="ok">rate_not_statutory</span></pre>
+      </div>
+    </div>
+
+    <div class="finding critical">
+      <div class="finding-head">
+        <h3>Reverse-charge bills were filed on the ordinary register</h3>
+        <span class="chip fixed">Fixed</span>
+      </div>
+      <p>
+        Detection required the answer to follow immediately after the words &ldquo;reverse
+        charge&rdquo;. The wording the GST portal itself uses &mdash; <em>&ldquo;Whether tax
+        payable on reverse charge basis&rdquo;</em> with <em>Yes</em> on the next line &mdash;
+        did not match, so those bills went to the normal register and the tax liability
+        landed on the wrong party.
+      </p>
+      <p>
+        The fix looks for the first answer within a short window after the phrase. The first
+        answer wins, so an explicit <em>No</em> is honoured rather than skipped over in
+        search of a <em>Yes</em> further down the page, and a document that names reverse
+        charge but answers nothing still reads as false.
+      </p>
+      <div class="evidence">
+        <div class="evidence-label">wordings now handled</div>
+<pre><span class="ok">yes</span>   Reverse Charge: Yes
+<span class="ok">yes</span>   Reverse charge - applicable
+<span class="ok">yes</span>   Whether tax payable on reverse charge basis &crarr; Yes
+<span class="ok">yes</span>   REVERSE CHARGE APPLICABLE
+
+<span class="dim">no</span>    Reverse Charge: No
+<span class="dim">no</span>    Reverse charge - Not Applicable
+<span class="dim">no</span>    Whether tax payable on reverse charge basis &crarr; N/A
+<span class="dim">no</span>    Reverse charge            <span class="dim">(named, unanswered)</span>
+<span class="dim">no</span>    Reverse Charge: No &crarr; E-way bill required: Yes</pre>
+      </div>
+    </div>
+
+    <div class="finding caution">
+      <div class="finding-head">
+        <h3>Smaller misreads, still open</h3>
+        <span class="chip caution">Known</span>
+      </div>
+      <ul class="plain">
+        <li><strong>Only the first HSN code is captured.</strong> The line-items list is always empty, so a multi-item bill files under one code.</li>
+        <li><strong>&ldquo;Credit note&rdquo; is matched anywhere in the text</strong> &mdash; a mention in your terms and conditions could misclassify a document.</li>
+        <li><strong>The supplier GSTIN is taken as the first one that is not the customer's</strong>, so a transporter's or bank's GSTIN in the footer could win.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="band-head">
+      <h2>What protects you</h2>
+    </div>
+
+    <div class="finding clear">
+      <div class="finding-head">
+        <h3>Everything unreadable is stopped before the workbook</h3>
+        <span class="chip clear">Verified</span>
+      </div>
+      <ul class="plain">
+        <li>A blank taxable value, a missing date, a missing party name and a failed GSTIN checksum each block posting on their own.</li>
+        <li><strong>Nothing auto-posts.</strong> The <code>auto_post_clean</code> setting exists in the settings file but is read by no code, so the toggle currently does nothing.</li>
+        <li>Overriding a blocked invoice is recorded on its history, so the decision is visible to an auditor.</li>
+      </ul>
+      <p>
+        The exposure was entirely the two silent cases above, which is why they were the two
+        worth fixing.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="verdict">
+      <h2>Where this leaves you</h2>
+      <p>
+        <strong>If invoices only ever arrive from this one vendor's software, offline is
+        genuinely adequate.</strong> The reader handles that layout completely, and the two
+        ways it could have been quietly wrong are now caught.
+      </p>
+      <p>
+        <strong>If bills will arrive from other suppliers, expect gaps.</strong> A different
+        billing system's layout &mdash; particularly one printing labels and values on the
+        same line &mdash; may yield almost nothing, and a scan or a photograph will yield
+        nothing at all. Those documents are flagged rather than mis-filed, but somebody has
+        to type them in.
+      </p>
+      <p>
+        The LLM path remains the answer for anything outside the known template. Nothing in
+        this report argues against staying offline today; it argues for knowing exactly
+        which invoice will need a human.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    Evidence gathered by replaying every archived invoice through the reader and through
+    the live validation path, plus six constructed invoice shapes.<br>
+    Both fixes are covered by 22 tests, including the false-positive cases &mdash; an
+    invoice's own rounding must not trip the rate check, and a later &ldquo;Yes&rdquo; must
+    not override an explicit &ldquo;No&rdquo;.<br>
+    Re-checked against all 19 real invoices afterwards: no new flags raised.
+  </footer>
+
+</div>
+</body>
+</html>

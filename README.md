@@ -24,6 +24,7 @@ Open these in a browser; they need no server and no network.
 | [`docs/gap-register.html`](docs/gap-register.html) | Every gap found across the data layer, API, security, operations, the browser and the GST domain. 29 findings, severity-ranked, each with the measurement behind it. **Start here.** |
 | [`docs/hardening-audit.html`](docs/hardening-audit.html) | The earlier review: the defects found and fixed, the gaps closed, and how each was verified. |
 | [`docs/reuse-assessment.html`](docs/reuse-assessment.html) | Whether `maliksudais24/Proposal-invoice-automation-` can be reused here. Short answer: it generates invoices where this reads them, and it carries no licence. |
+| [`docs/offline-reader-limits.html`](docs/offline-reader-limits.html) | What the offline reader can and cannot extract, measured against all 19 real invoices plus six constructed layouts. Names the two ways it was silently wrong — multi-rate invoices and reverse-charge wording — both now fixed. |
 | [`AUDIT.md`](AUDIT.md) | The hardening audit in Markdown, for reading in a diff. |
 
 ---

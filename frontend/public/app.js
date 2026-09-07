@@ -22,6 +22,12 @@ const state = {
   selected: new Set(),
   editing: false,
   busy: false,
+  openPanel: null,
+
+  // Export screen only: "All periods" is chosen instead of one period. Kept
+  // apart from `period` so the rest of the app never sees a period that is
+  // not a real one.
+  exportAll: false,
   theme: "system",
 
   // The batch the Processing screen is watching, and the History screen's
@@ -232,9 +238,23 @@ async function openDocument(doc) {
 }
 
 async function saveWorkbook(period) {
+  await download(`/api/workbook/download?period=${encodeURIComponent(period)}`,
+                 `Ira Innovations GST ${period}.xlsx`);
+}
+
+/* Every period at once. The backend zips one workbook per period rather than
+   merging them, so what arrives is still one filable return per file. */
+async function saveAllWorkbooks() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  toast("Gathering every period…");
+  await download("/api/workbook/download-all",
+                 `Ira Innovations GST workbooks ${stamp}.zip`);
+}
+
+async function download(path, filename) {
   try {
-    const objectUrl = await blobUrl(`/api/workbook/download?period=${encodeURIComponent(period)}`);
-    const link = el("a", { href: objectUrl, download: `Ira Innovations GST ${period}.xlsx` });
+    const objectUrl = await blobUrl(path);
+    const link = el("a", { href: objectUrl, download: filename });
     document.body.append(link);
     link.click();
     link.remove();
@@ -463,7 +483,13 @@ function documentRow(doc) {
     acts.append(el("button", { className: "btn sm ghost", textContent: "Open", onclick: () => openReview(doc.id) }));
   }
   if (doc.status === "ready") {
-    acts.append(el("button", { className: "btn sm primary", textContent: "Post", onclick: () => postOne(doc.id) }));
+    // Never disabled. A double-click is already refused inside postRow, and a
+    // disabled attribute here can only ever be wrong: the list is not redrawn
+    // while a post is in flight, so it would be painting a stale busy flag.
+    acts.append(el("button", {
+      type: "button", className: "btn sm primary", textContent: "Post",
+      onclick: (ev) => postRow(doc.id, ev.currentTarget),
+    }));
   }
   if (doc.status === "posted") {
     acts.append(el("button", { className: "btn sm ghost", textContent: "Un-post", onclick: () => unpostOne(doc.id) }));
@@ -911,9 +937,41 @@ async function saveEdits() {
 // Actions
 // --------------------------------------------------------------------------- //
 
+/* The bare call. It reports nothing and repaints nothing, because the two
+   callers below need to control both: Review moves on to the next invoice,
+   and a bulk post must not repaint once per invoice. Anything else should
+   call postRow. */
 async function postOne(docId, override = false) {
   const suffix = override ? "?override=true" : "";
   await api(`/api/documents/${docId}/confirm${suffix}`, { method: "POST" });
+}
+
+/* Posting one invoice from a list row. Without this the button looked dead:
+   the row it was sitting in never changed, and a refusal from the backend -
+   the workbook open in Excel, a period already filed - was thrown away
+   unseen. */
+async function postRow(docId, button) {
+  if (state.busy) return;
+  state.busy = true;
+
+  // The button says so itself, straight away. Writing to the workbook can take
+  // a moment, and a toast at the top of the screen is a long way from the row
+  // being clicked.
+  const label = button ? button.textContent : null;
+  if (button) { button.disabled = true; button.textContent = "Posting…"; }
+
+  try {
+    await postOne(docId);
+    toast("Posted to the workbook.", "good");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    state.busy = false;
+    // Restored even though the refresh below usually replaces the row: if that
+    // refresh fails, the button must not be left saying "Posting…" for good.
+    if (button) { button.disabled = false; button.textContent = label; }
+  }
+  await refresh();
 }
 
 async function postFromReview(docId, wasBlocked) {
@@ -1521,6 +1579,17 @@ function wire() {
   });
 
   // The bell is a shortcut to the work, not a notification centre.
+  $("#btn-activity").addEventListener("click", (e) => { e.stopPropagation(); openPanel("activity"); });
+
+  // A panel that only closes by clicking its own button is a panel people leave
+  // open by accident.
+  document.addEventListener("click", (e) => {
+    if (state.openPanel && !e.target.closest("#popover")) closePanel();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.openPanel) closePanel();
+  });
+
   $("#btn-alerts").addEventListener("click", () => {
     const counts = tally();
     if (counts.needs_review) { state.filter = "needs_review"; show("queue"); }
@@ -2304,45 +2373,20 @@ async function renderDashboard() {
 
     el("div", { className: "card" }, [
       el("header", {}, [
-        el("h2", { textContent: "Invoices received" }),
+        el("h2", { textContent: "Largest by value" }),
         el("span", { className: "grow" }),
-        el("span", { className: "muted", textContent: "last 30 days" }),
+        el("span", { className: "sub", textContent: "posted only" }),
       ]),
-      timeChart(arrivals),
-    ]),
-
-    el("div", { className: "card" }, [
-      el("header", {}, [
-        el("h2", { textContent: "Recent activity" }),
-        el("span", { className: "grow" }),
-        isAdmin()
-          ? el("button", { className: "btn sm ghost", textContent: "See all",
-                           onclick: () => show("admin") })
-          : null,
-      ]),
-      activityFeed(data.activity || []),
+      (data.top_parties || []).length
+        ? partiesList(data.top_parties)
+        : el("div", { className: "empty" }, "Nothing posted yet."),
     ]),
   ]));
 
-  // ---- Recent invoices, and who the value sits with ------------------------
-  const parties = el("div", { className: "parties" });
-  const biggest = Math.max(...(data.top_parties || []).map((p) => Number(p.value)), 1);
-  for (const party of data.top_parties || []) {
-    parties.append(el("div", { className: "party" }, [
-      el("div", { className: "line" }, [
-        el("span", { className: "who-name", textContent: party.name }),
-        el("span", { className: "amount", textContent: money(party.value) }),
-      ]),
-      el("div", { className: "track" },
-        el("div", { className: "fill", style: `width:${(Number(party.value) / biggest) * 100}%` })),
-      el("div", { className: "sub",
-                  textContent: `${party.invoices} invoice${party.invoices === 1 ? "" : "s"}` }),
-    ]));
-  }
-
+  // ---- Recent invoices -----------------------------------------------------
   const rows = data.recent || [];
   body.append(el("div", { className: "dash-split" }, [
-    el("div", { className: "card" }, [
+    el("div", { className: "card span-row" }, [
       el("header", {}, [
         el("h2", { textContent: "Recent invoices" }),
         el("span", { className: "grow" }),
@@ -2356,17 +2400,94 @@ async function renderDashboard() {
             "Upload an invoice and it will be read, classified and checked.",
           ]),
     ]),
-    el("div", { className: "card" }, [
-      el("header", {}, [
-        el("h2", { textContent: "Largest by value" }),
-        el("span", { className: "grow" }),
-        el("span", { className: "muted", textContent: "posted only" }),
-      ]),
-      (data.top_parties || []).length
-        ? parties
-        : el("div", { className: "empty" }, "Nothing posted yet."),
-    ]),
   ]));
+}
+
+// --------------------------------------------------------------------------- //
+// Topbar panels
+//
+// Recent activity and Largest by value used to be dashboard cards. They are
+// reference, not work: you glance at them, you do not act on them, and they
+// were taking two of the three columns on the screen someone lands on. Moved
+// behind topbar buttons, they are one click away from every screen instead of
+// occupying the dashboard on all of them.
+// --------------------------------------------------------------------------- //
+
+const PANELS = {
+  activity: {
+    button: "btn-activity",
+    title: "Recent activity",
+    note: "invoices only",
+    empty: "Nothing has happened yet.",
+    build: (data) => (data.activity || []).length ? activityFeed(data.activity) : null,
+  },
+};
+
+/* Built here rather than inside renderDashboard so the panel and any future
+   card render the same thing. */
+function partiesList(rows) {
+  const box = el("div", { className: "parties" });
+  const biggest = Math.max(...rows.map((p) => Number(p.value)), 1);
+  for (const party of rows) {
+    box.append(el("div", { className: "party" }, [
+      el("div", { className: "line" }, [
+        el("span", { className: "who-name", textContent: party.name }),
+        el("span", { className: "amount", textContent: money(party.value) }),
+      ]),
+      el("div", { className: "track" },
+        el("div", { className: "fill",
+                    style: `width:${(Number(party.value) / biggest) * 100}%` })),
+      el("div", { className: "sub",
+                  textContent: `${party.invoices} invoice${party.invoices === 1 ? "" : "s"}` }),
+    ]));
+  }
+  return box;
+}
+
+function closePanel() {
+  const box = $("#popover");
+  if (!box) return;
+  box.hidden = true;
+  box.textContent = "";
+  state.openPanel = null;
+  for (const key of Object.keys(PANELS)) {
+    const button = $(`#${PANELS[key].button}`);
+    if (button) button.setAttribute("aria-expanded", "false");
+  }
+}
+
+async function openPanel(key) {
+  const spec = PANELS[key];
+  const box = $("#popover");
+  if (!spec || !box) return;
+
+  if (state.openPanel === key) { closePanel(); return; }   // second click closes
+  closePanel();
+  state.openPanel = key;
+  $(`#${spec.button}`).setAttribute("aria-expanded", "true");
+
+  box.hidden = false;
+  box.append(
+    el("header", {}, [
+      el("h2", { textContent: spec.title }),
+      el("span", { className: "grow" }),
+      el("span", { className: "muted", textContent: spec.note }),
+    ]),
+    el("div", { className: "body" }, el("div", { className: "empty" }, "Loading…")),
+  );
+
+  let data;
+  try {
+    data = await api("/api/dashboard");
+  } catch (err) {
+    if (state.openPanel !== key) return;
+    box.lastChild.replaceChildren(el("div", { className: "empty" }, err.message));
+    return;
+  }
+  if (state.openPanel !== key) return;   // closed, or another opened, while loading
+
+  const content = spec.build(data);
+  box.lastChild.replaceChildren(content || el("div", { className: "empty" }, spec.empty));
 }
 
 // --------------------------------------------------------------------------- //
@@ -3378,23 +3499,47 @@ async function renderExport() {
   body.textContent = "";
   const info = state.info || {};
 
+  const ALL = "__all__";
+  const periodList = info.periods || [];
+
   const picker = el("select", { className: "control" });
-  for (const period of info.periods || []) {
+  for (const period of periodList) {
     picker.append(el("option", { value: period, textContent: period,
-                                 selected: period === state.period }));
+                                 selected: !state.exportAll && period === state.period }));
   }
-  picker.addEventListener("change", () => { state.period = picker.value; renderExport(); });
+  // Every period at once, as a zip of one workbook per period. Offered only
+  // when there is more than one, since with a single period it would just be
+  // the same file wrapped in a zip.
+  if (periodList.length > 1) {
+    picker.append(el("option", { value: ALL, textContent: "All periods",
+                                 selected: state.exportAll === true }));
+  }
+
+  picker.addEventListener("change", () => {
+    state.exportAll = picker.value === ALL;
+    if (!state.exportAll) state.period = picker.value;
+    renderExport();
+  });
+
+  const all = state.exportAll === true && periodList.length > 1;
 
   body.append(el("div", { className: "card" }, [
     el("header", {}, [el("h2", { textContent: "Download the workbook" })]),
     el("div", { className: "card-body form" }, [
       el("label", {}, [el("span", {}, "Return period"), picker]),
       el("p", { className: "muted" },
-        "One workbook per return period, seeded from your master and appended to. The source "
-        + "file is never written to."),
+        all
+          ? `A zip holding all ${periodList.length} workbooks, one file per return period. `
+            + "They stay separate: each period is a return in its own right, with its own "
+            + "totals and its own tax position."
+          : "One workbook per return period, seeded from your master and appended to. The source "
+            + "file is never written to."),
       el("div", { className: "row-actions" }, [
-        el("button", { className: "btn primary", textContent: "Download .xlsx",
-                       onclick: () => saveWorkbook(state.period) }),
+        el("button", {
+          className: "btn primary",
+          textContent: all ? "Download .zip" : "Download .xlsx",
+          onclick: () => (all ? saveAllWorkbooks() : saveWorkbook(state.period)),
+        }),
         el("button", { className: "btn", textContent: "See the rows first",
                        onclick: () => show("registers") }),
       ]),

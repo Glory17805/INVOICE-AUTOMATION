@@ -11,11 +11,13 @@ the shape that eventually leaks a route.
 
 from __future__ import annotations
 
+import io
 import logging
 import mimetypes
 import os
 import threading
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -23,7 +25,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import (
@@ -574,7 +576,8 @@ def dashboard(user: dict = Depends(require_user)) -> dict:
         "arrivals": _arrivals_by_day(documents),
         "by_source": by_source,
         "top_parties": _top_parties(documents),
-        "activity": accounts.activity(8),
+        # Invoice events only. The Audit screen still shows everything.
+        "activity": accounts.activity(8, accounts.DOCUMENT_ACTIONS),
         "recent": [_summarise(doc) for doc in documents[:6]],
         "periods": sorted({d["period"] for d in documents if d.get("period")},
                           key=periods.sort_key, reverse=True),
@@ -992,6 +995,37 @@ def download_workbook(period: str | None = None, user: dict = Depends(require_us
         workbook.workbook_path(period),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=f"Ira Innovations GST {period}.xlsx",
+    )
+
+
+@app.get("/api/workbook/download-all")
+def download_all_workbooks(user: dict = Depends(require_user)):
+    """Every period, as a zip of one workbook per period.
+
+    Not one merged workbook: each period's file is a return in its own right,
+    with its own totals and its own tax position, and a merged one would
+    correspond to no return that can actually be filed.
+    """
+    available = workbook.available_periods()
+    if not available:
+        raise HTTPException(404, "There are no workbooks yet.")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for period in available:
+            workbook.ensure_working_copy(period)
+            bundle.write(workbook.workbook_path(period),
+                         arcname=f"Ira Innovations GST {period}.xlsx")
+    buffer.seek(0)
+
+    accounts.record(user, "workbook_downloaded", {"period": "all",
+                                                  "periods": available})
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition":
+                 f'attachment; filename="Ira Innovations GST workbooks {stamp}.zip"'},
     )
 
 

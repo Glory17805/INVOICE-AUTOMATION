@@ -1,0 +1,26 @@
+# Everything in the runtime set, plus what reading a scan needs.
+#
+#   python -m pip install -r requirements-ocr.txt
+#
+# Separate from requirements.txt because OCR is optional by design: the reader
+# probes for these at call time and, finding none, reports that the document
+# is a scan it cannot read rather than failing to start. A deployment that
+# only ever receives digital PDFs does not need any of this.
+#
+# The Python packages are not sufficient on their own. pytesseract is a
+# wrapper around the Tesseract engine, which is a system install:
+#
+#   Windows   winget install UB-Mannheim.TesseractOCR
+#   Debian    sudo apt install tesseract-ocr
+#   macOS     brew install tesseract
+#
+# poppler, which pdf2image needs, is deliberately NOT required: scanned PDFs
+# are read through the page images pypdf can already reach, and pdf2image is
+# only the fallback for the unusual file whose pages are drawn rather than
+# placed. Install poppler as well if you meet one.
+
+-r requirements.txt
+
+pillow>=10.0,<13.0
+pytesseract>=0.3.10,<0.4
+pdf2image>=1.17,<2.0

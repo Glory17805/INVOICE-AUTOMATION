@@ -11,6 +11,7 @@ has to stop at Quick Review.
 from __future__ import annotations
 
 import hashlib
+import logging
 import shutil
 from pathlib import Path
 from typing import ClassVar
@@ -25,18 +26,27 @@ from .config import (
     ensure_dirs,
     extraction_provider,
     has_credentials,
+    setting,
 )
+from .extract import confidence, heuristic
 from .extract import gemini as gemini_extractor
-from .extract import heuristic
 from .extract import llm as llm_extractor
-
-# Providers are interchangeable at extract(path) -> ExtractedInvoice.
-_READERS = {"claude": llm_extractor, "gemini": gemini_extractor}
 from .extract.pdftext import document_text
 from .extract.split import find_segments, write_segment
 from .gst import rules
-from .gst.validate import ValidationResult, check_duplicate, reconcile_tax, validate_gstin
+from .gst.validate import (
+    ValidationResult,
+    check_duplicate,
+    check_rate_is_statutory,
+    reconcile_tax,
+    validate_gstin,
+)
 from .models import DocStatus, DocumentType, ExtractedInvoice, GstTreatment
+
+log = logging.getLogger("gst.pipeline")
+
+# Providers are interchangeable at extract(path) -> ExtractedInvoice.
+_READERS = {"claude": llm_extractor, "gemini": gemini_extractor}
 
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".txt", ".csv"}
 
@@ -257,12 +267,44 @@ def _read_document(path: Path) -> tuple[ExtractedInvoice, str, str | None]:
     if not has_credentials():
         return heuristic.extract(path), "heuristic", _no_credentials_note(provider)
 
+    # Rules first, provider second.
+    #
+    # The offline reader now handles the common case well enough to be the
+    # default path rather than the fallback: on the invoices this system
+    # holds it reads every field, and it says how far to trust each one. So
+    # it runs first, and the provider is called only for the documents it is
+    # not confident about - a scan, an unfamiliar layout, an invoice carrying
+    # more than one tax rate.
+    #
+    # The saving is the point. A hundred invoices that used to be a hundred
+    # API calls become the handful the rules could not settle, which is the
+    # difference between a quota that runs out mid-filing and one that does
+    # not. Set GST_ALWAYS_ASK_PROVIDER=1 to send everything, as before.
+    if not _always_ask_provider():
+        offline, report = heuristic.read(path)
+        if report.overall in _CONFIDENT:
+            return offline, "heuristic", None
+        log.info("Escalating %s to %s: offline confidence is %s (%s).",
+                 path.name, provider, report.overall,
+                 ", ".join(f.name for f in report.weak()) or "no field in particular")
+
     try:
         return reader.extract(path), provider, None
     except llm_extractor.ExtractionUnavailable as exc:
         return heuristic.extract(path), "heuristic", str(exc)
     except Exception as exc:  # unexpected: still capture rather than lose the document
         return heuristic.extract(path), "heuristic", f"Reader failed: {exc}"
+
+
+# Confidence levels good enough to file on without asking a provider. MEDIUM
+# is included deliberately: it means "read cleanly, nothing corroborates it",
+# and every document still goes to a person for review either way. Escalating
+# MEDIUM would send nearly everything and defeat the purpose.
+_CONFIDENT = frozenset({confidence.HIGH, confidence.MEDIUM})
+
+
+def _always_ask_provider() -> bool:
+    return setting("GST_ALWAYS_ASK_PROVIDER", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _provider_key_name() -> str:
@@ -321,6 +363,7 @@ def evaluate(doc: ExtractedInvoice, *, exclude_key: tuple[str, str | None] | Non
         taxable_value=treatment.taxable_value,
         rate=treatment.rate,
     )
+    check_rate_is_statutory(result, treatment.rate)
 
     period = period_for(doc)
     existing = workbook.posted_keys(treatment.document_type, period) if period else []

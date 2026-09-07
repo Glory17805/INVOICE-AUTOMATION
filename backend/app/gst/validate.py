@@ -139,6 +139,41 @@ def reconcile_tax(
         )
 
 
+# The rates GST actually has. A document cannot lawfully be taxed at anything
+# else, so a derived rate that is not one of these means the figures behind it
+# were misread.
+STATUTORY_RATES = (
+    Decimal("0.0025"), Decimal("0.005"), Decimal("0.03"), Decimal("0.05"),
+    Decimal("0.12"), Decimal("0.18"), Decimal("0.28"),
+)
+
+# Half a percentage point. Wide enough to absorb an invoice whose own rounding
+# leaves the arithmetic slightly off a slab, narrow enough that two different
+# slabs averaged together cannot land inside it.
+RATE_TOLERANCE = Decimal("0.005")
+
+
+def check_rate_is_statutory(result: ValidationResult, rate: Decimal) -> None:
+    """Flag a rate that is not a real GST slab.
+
+    This is what catches an invoice carrying more than one rate. Nothing else
+    does: the amounts are read as a single taxable value and a single tax
+    figure, they agree with each other perfectly, and every other check passes.
+    Only the rate implied by dividing one by the other gives it away - 5% and
+    18% goods on one bill derive 13.67%, which is not a rate that exists.
+    """
+    if rate <= 0:
+        return  # already reported as rate_missing
+    if any(abs(rate - slab) <= RATE_TOLERANCE for slab in STATUTORY_RATES):
+        return
+    result.add(
+        "rate_not_statutory",
+        f"The tax on this document works out to {rate * 100:.2f}%, which is not a GST rate. "
+        "That usually means the invoice carries more than one rate and has been read as a "
+        "single row - check the item lines and split it if so.",
+    )
+
+
 def check_duplicate(
     result: ValidationResult,
     *,

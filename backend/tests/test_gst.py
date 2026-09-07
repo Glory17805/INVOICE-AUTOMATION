@@ -423,3 +423,74 @@ def test_an_unreadable_scan_reports_one_cause_not_seven_symptoms(tmp_path, monke
 
     record = pipeline.capture(_ONE_PIXEL_PNG, "scan.png", source="scan")[0]
     assert [i["code"] for i in record["issues"]] == ["no_text_layer"]
+
+
+# --------------------------------------------------------------------------- #
+# The two things an offline read gets silently wrong
+# --------------------------------------------------------------------------- #
+
+class TestReverseChargeWording:
+    """The answer may sit some way behind the words "reverse charge"."""
+
+    @pytest.mark.parametrize("text", [
+        "Reverse Charge: Yes",
+        "Reverse charge - applicable",
+        "Whether tax payable on reverse charge basis\nYes",
+        "Whether tax payable on reverse charge basis : Yes",
+        "REVERSE CHARGE APPLICABLE",
+    ])
+    def test_it_is_read_as_yes(self, text):
+        from app.extract.heuristic import _reverse_charge
+        assert _reverse_charge(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "Reverse Charge: No",
+        "Reverse charge - Not Applicable",
+        "Whether tax payable on reverse charge basis\nNo",
+        "Whether tax payable on reverse charge basis\nN/A",
+        "Reverse charge",                       # named but unanswered
+        "Goods sold under normal charge",       # never mentioned
+    ])
+    def test_it_is_read_as_no(self, text):
+        from app.extract.heuristic import _reverse_charge
+        assert _reverse_charge(text) is False
+
+    def test_a_later_yes_cannot_override_an_explicit_no(self):
+        """The first answer after the phrase wins.
+
+        Claiming RCM where the document denies it moves the tax liability to
+        the wrong party, so a distant "Yes" must not be borrowed.
+        """
+        from app.extract.heuristic import _reverse_charge
+        assert _reverse_charge("Reverse Charge: No\nE-way bill required: Yes") is False
+
+
+class TestRateMustBeStatutory:
+    """A rate that is not a GST slab means the figures behind it were misread."""
+
+    @pytest.mark.parametrize("rate", ["0.0025", "0.005", "0.03", "0.05", "0.12", "0.18", "0.28"])
+    def test_every_real_slab_passes(self, rate):
+        from app.gst.validate import ValidationResult, check_rate_is_statutory
+        result = ValidationResult()
+        check_rate_is_statutory(result, Decimal(rate))
+        assert result.issues == []
+
+    def test_an_invoices_own_rounding_does_not_trip_it(self):
+        """18% on an odd taxable value derives 17.9997%, which is still 18%."""
+        from app.gst.validate import ValidationResult, check_rate_is_statutory
+        result = ValidationResult()
+        check_rate_is_statutory(result, Decimal("0.179997"))
+        assert result.issues == []
+
+    def test_two_rates_averaged_together_are_caught(self):
+        """5% and 18% goods on one bill derive 13.67% - not a rate that exists."""
+        from app.gst.validate import ValidationResult, check_rate_is_statutory
+        result = ValidationResult()
+        check_rate_is_statutory(result, Decimal("0.1367"))
+        assert [i.code for i in result.blocking] == ["rate_not_statutory"]
+
+    def test_a_missing_rate_is_left_to_the_check_that_owns_it(self):
+        from app.gst.validate import ValidationResult, check_rate_is_statutory
+        result = ValidationResult()
+        check_rate_is_statutory(result, Decimal("0"))
+        assert result.issues == []

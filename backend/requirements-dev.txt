@@ -4,6 +4,7 @@
 #   python -m pytest tests -q
 
 -r requirements.txt
+-r requirements-ocr.txt
 
 pytest>=8.0,<10.0
 ruff>=0.6,<1.0
