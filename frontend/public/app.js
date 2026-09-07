@@ -374,7 +374,6 @@ function paintPips() {
   setPip("#pip-inbox", counts.open, counts.needs_review ? "attention" : "ready");
   setPip("#pip-review", counts.needs_review + counts.ready,
          counts.needs_review ? "attention" : "ready");
-  setPip("#pip-email", 0, "");
 
   /* The bell counts only what a person has to decide about - things flagged or
      failed. Counting everything in the queue would leave a permanent badge,
@@ -468,9 +467,8 @@ function documentRow(doc) {
   }
   if (doc.status === "posted") {
     acts.append(el("button", { className: "btn sm ghost", textContent: "Un-post", onclick: () => unpostOne(doc.id) }));
-  } else {
-    acts.append(el("button", { className: "btn sm danger", textContent: "Remove", onclick: () => removeOne(doc.id) }));
   }
+  acts.append(deleteButton(doc));
 
   const box = el("input", {
     type: "checkbox",
@@ -729,6 +727,7 @@ function renderReview() {
       el("span", { className: "grow" }),
       el("button", { className: "btn ghost", textContent: "Skip", disabled: index >= pending.length - 1,
         onclick: () => { state.reviewId = pending[index + 1].id; state.editing = false; renderReview(); } }),
+      deleteButton(doc, { className: "btn danger" }),
     ]),
   ]);
 
@@ -976,6 +975,67 @@ async function unpostOne(docId) {
   catch (err) { toast(err.message, "error"); }
   await refresh();
 }
+
+/* One delete, used from every screen that shows an invoice.
+
+   A posted invoice cannot simply be deleted - the backend refuses it with a
+   409, correctly, because a row of it is sitting in the workbook. That left
+   someone looking at a posted document with no way forward except finding the
+   un-post button on a different screen. So this handles the posted case
+   itself: it says plainly that the workbook row goes too, then un-posts and
+   deletes as one action.
+
+   Takes the document rather than an id so it can tell the two cases apart
+   without a second fetch. */
+async function deleteInvoice(doc) {
+  const name = doc.invoice_number
+    || (doc.extracted && doc.extracted.invoice_number)
+    || (doc.treatment && doc.treatment.counterparty_name)
+    || doc.filename
+    || "this invoice";
+  const posted = doc.status === "posted";
+
+  const question = posted
+    ? `Delete ${name}?
+
+It is posted to ${doc.sheet || "the workbook"}`
+      + `${doc.row ? ` row ${doc.row}` : ""} for ${doc.period || "this period"}. `
+      + `That row will be cleared as well, and the totals will recalculate.`
+    : `Delete ${name}?
+
+The invoice and its stored copy are removed from the queue.`;
+
+  if (!confirm(question)) return false;
+
+  try {
+    if (posted) {
+      // Clear the register row first; the delete is refused while it stands.
+      await api(`/api/documents/${doc.id}/unpost`, { method: "POST" });
+    }
+    await api(`/api/documents/${doc.id}`, { method: "DELETE" });
+    toast(posted ? `Deleted, and the workbook row was cleared.` : "Deleted.", "good");
+  } catch (err) {
+    toast(err.message, "error");
+    return false;
+  }
+  await refresh();
+  return true;
+}
+
+
+/* The button, so every screen gets the same affordance rather than each one
+   inventing its own wording. */
+function deleteButton(doc, { label = "Delete", className = "btn sm danger" } = {}) {
+  return el("button", {
+    className,
+    textContent: label,
+    title: doc.status === "posted"
+      ? "Delete this invoice and clear its row from the workbook"
+      : "Delete this invoice",
+    onclick: (event) => { event.stopPropagation(); deleteInvoice(doc); },
+  });
+}
+
 
 async function removeOne(docId) {
   if (!confirm("Remove this invoice from the queue?")) return;
@@ -1335,7 +1395,7 @@ const SCREENS = [
   "dashboard", "upload", "processing", "queue", "review", "history",
   "export", "registers", "tax",
   "vendors", "categories", "templates", "rules",
-  "email", "settings", "admin", "audit",
+  "settings", "admin", "audit",
 ];
 
 // Screens only an administrator may open. Checked here as well as on the
@@ -1403,7 +1463,6 @@ function show(name, { push = true } = {}) {
     categories: renderCategories,
     templates: renderTemplates,
     rules: renderRules,
-    email: renderEmail,
     settings: renderSettings,
     admin: renderAdmin,
     audit: renderAudit,
@@ -1450,8 +1509,6 @@ function wire() {
   const input = $("#file-input");
   input.addEventListener("change", () => { upload([...input.files]); input.value = ""; });
   wireDropzone($("#dropzone"));
-
-  $("#btn-scan").addEventListener("click", checkWatchFolder);
 
   /* Search from anywhere lands on History with the term already applied,
      rather than being a second, weaker search of its own. */
@@ -1968,7 +2025,6 @@ const NAV_ICON = {
   settings:  "M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6"
              + "M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6 3.5 3.5",
   audit:     "M8 4.4V8l2.4 1.4M14.2 8A6.2 6.2 0 1 1 8 1.8",
-  email:     "M1.8 3.8h12.4v8.4H1.8zM2.1 4.4 8 8.9l5.9-4.5",
 };
 
 /* label, screen or children, icon, and whether it is admin-only. */
@@ -1982,10 +2038,7 @@ const NAV = [
       { label: "Review", screen: "review", pip: "pip-review" },
       { label: "History", screen: "history" },
   ] },
-  { label: "Processing", icon: "gears", children: [
-      { label: "In progress", screen: "processing" },
-      { label: "Email intake", screen: "email", pip: "pip-email" },
-  ] },
+  { label: "Processing", screen: "processing", icon: "gears" },
   { label: "Excel Export", screen: "export", icon: "export" },
   { label: "Reports", icon: "reports", children: [
       { label: "GST registers", screen: "registers" },
@@ -2444,6 +2497,10 @@ async function renderProcessing() {
             ? el("div", { className: "proc-actions" }, [
                 el("button", { className: "btn sm", textContent: "Review this invoice",
                                onclick: () => openReview(report.id) }),
+                deleteButton(
+                  { id: report.id, filename: report.filename, status: report.stage },
+                  { className: "btn sm danger" },
+                ),
               ])
             : null,
         ]),
@@ -2528,6 +2585,7 @@ function historyTable(rows, { compact = false } = {}) {
       actions.append(el("button", { className: "btn xs ghost", textContent: "Retry",
                                     onclick: () => reprocess(row.id) }));
     }
+    actions.append(deleteButton(row, { className: "btn xs danger" }));
 
     tbody.append(el("tr", { className: row.status === "failed" ? "bad" : "" }, [
       el("td", {}, [
@@ -2607,100 +2665,6 @@ async function renderHistory() {
     ]),
     historyTable(data.documents),
   ]));
-}
-
-// --------------------------------------------------------------------------- //
-// Email intake
-// --------------------------------------------------------------------------- //
-
-async function renderEmail() {
-  const body = $("#email-body");
-  body.textContent = "";
-
-  let data;
-  try {
-    data = await api("/api/email/status");
-  } catch (err) {
-    body.append(el("div", { className: "card" }, el("div", { className: "empty" }, err.message)));
-    return;
-  }
-
-  setPip("#pip-email", data.waiting, data.waiting ? "attention" : "");
-
-  body.append(el("div", { className: "card" }, [
-    el("header", {}, [
-      el("h2", { textContent: "How invoices arrive" }),
-      el("span", { className: "grow" }),
-      el("span", { className: `pill ${data.connected ? "ready" : "new"}` },
-        [icon(data.connected ? "check" : "clock", 12),
-         data.connected ? "Watch folder active" : "Turned off"]),
-    ]),
-    el("div", { className: "card-body" }, [
-      el("div", { className: "kv" }, [
-        el("span", { className: "k" }, "Mode"),
-        el("span", { className: "v" }, "Watch folder"),
-        el("span", { className: "k" }, "Folder"),
-        el("span", { className: "v mono", textContent: data.folder }),
-        el("span", { className: "k" }, "Waiting to be picked up"),
-        el("span", { className: "v" }, String(data.waiting)),
-      ]),
-      el("div", { className: "row-actions", style: "margin-top:.9rem" }, [
-        el("button", { className: "btn primary", textContent: "Check for new invoices",
-                       onclick: checkWatchFolder }),
-      ]),
-    ]),
-  ]));
-
-  if (data.waiting_files && data.waiting_files.length) {
-    body.append(el("div", { className: "card" }, [
-      el("header", {}, [el("h2", { textContent: "Sitting in the folder" })]),
-      el("ul", { className: "plain" },
-        data.waiting_files.map((name) => el("li", { className: "mono", textContent: name }))),
-    ]));
-  }
-
-  // Honest about what is not built, rather than a Connected badge that means
-  // nothing. A green tick against a mailbox nobody wired up is worse than
-  // saying plainly that the mail rule is doing the work.
-  body.append(el("div", { className: "card" }, [
-    el("header", {}, [el("h2", { textContent: "Direct mailbox connection" })]),
-    el("div", { className: "card-body" }, [
-      alertBox("info", data.mailbox_connector.detail),
-      el("p", { className: "muted" },
-        "A Microsoft 365 or Gmail connector would remove that step. It needs the mailbox "
-        + "invoices actually arrive in, and consent to read it — neither of which this "
-        + "system should guess at."),
-    ]),
-  ]));
-
-  const rules = data.rules || {};
-  body.append(el("div", { className: "card" }, [
-    el("header", {}, [el("h2", { textContent: "Processing rules" })]),
-    el("div", { className: "card-body" }, [
-      toggleRow("email_process_pdf_attachments", "Process PDF attachments",
-                rules.process_pdf_attachments),
-      toggleRow("email_mark_processed", "Mark emails once their invoice is captured",
-                rules.mark_processed),
-      toggleRow("email_notify", "Send a notification when processing finishes", rules.notify),
-      el("p", { className: "muted" },
-        "These apply to the mail rule feeding the watch folder. They are saved here so the "
-        + "connector honours them the day it is wired up."),
-    ]),
-  ]));
-}
-
-async function checkWatchFolder() {
-  try {
-    const result = await api("/api/ingest/folder", { method: "POST" });
-    const n = result.captured.length;
-    if (result.errors && result.errors.length) toast(result.errors.join("; "), "error");
-    if (!n) { toast("Nothing new in the watch folder."); return; }
-    state.lastBatch = result.captured.map((d) => d.id);
-    toast(`${n} invoice${n > 1 ? "s" : ""} picked up — reading…`);
-    show("processing");
-  } catch (err) {
-    toast(err.message, "error");
-  }
 }
 
 // --------------------------------------------------------------------------- //

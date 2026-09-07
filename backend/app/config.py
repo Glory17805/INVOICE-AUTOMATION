@@ -126,7 +126,12 @@ def approval_mode() -> str:
 # Which reader the pipeline uses. Claude and Gemini are interchangeable at the
 # `extract(path) -> ExtractedInvoice` boundary; the offline reader is the
 # fallback when neither has usable credentials.
-PROVIDERS = ("claude", "gemini")
+# "offline" is a first-class choice, not the absence of one. Running without a
+# model is a legitimate way to use this system - nothing leaves the machine,
+# and text-layer PDFs still read - so it needs to be configurable as an
+# intention rather than inferred from a missing key. The difference is visible:
+# a missing key is reported as degraded, offline is reported as chosen.
+PROVIDERS = ("claude", "gemini", "offline")
 
 DEFAULT_MODELS = {
     "claude": "claude-opus-5",
@@ -203,6 +208,8 @@ def extraction_model() -> str:
     """The model the active provider will use."""
     configured = setting("GST_EXTRACTION_MODEL")
     provider = extraction_provider()
+    if provider == "offline":
+        return "offline reader"
     if provider == "gemini":
         return setting("GST_GEMINI_MODEL") or (
             configured if configured.startswith("gemini") else DEFAULT_MODELS["gemini"]
@@ -227,12 +234,24 @@ def anthropic_credentials() -> bool:
 
 
 def has_credentials() -> bool:
-    """Whether the active provider can authenticate at all."""
-    return bool(gemini_key()) if extraction_provider() == "gemini" else anthropic_credentials()
+    """Whether the active provider can authenticate at all.
+
+    Offline needs no credential and is not missing one, so it answers True:
+    the reader it wants is available. Answering False would report a
+    deliberate choice as a broken configuration.
+    """
+    provider = extraction_provider()
+    if provider == "offline":
+        return True
+    if provider == "gemini":
+        return bool(gemini_key())
+    return anthropic_credentials()
 
 
 def credential_source() -> str | None:
     """Which credential the app will use, for display on the header."""
+    if extraction_provider() == "offline":
+        return "no credential needed"
     if extraction_provider() == "gemini":
         return "API key" if gemini_key() else None
     if setting("ANTHROPIC_API_KEY"):

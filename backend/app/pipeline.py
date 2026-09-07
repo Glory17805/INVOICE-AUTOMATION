@@ -242,6 +242,13 @@ def _read_document(path: Path) -> tuple[ExtractedInvoice, str, str | None]:
     reader, and the note says why so nobody has to guess.
     """
     provider = extraction_provider()
+
+    # Offline is a choice, so it reads offline and says nothing. No note,
+    # because there is nothing wrong: a note here would surface on every
+    # document as though something had failed.
+    if provider == "offline":
+        return heuristic.extract(path), "heuristic", None
+
     reader = _READERS.get(provider)
 
     if reader is None:

@@ -239,3 +239,46 @@ def test_the_scan_message_names_the_active_providers_key(monkeypatch):
     monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "claude")
     assert pipeline._provider_key_name() == "ANTHROPIC_API_KEY"
     assert "Claude" in pipeline._provider_label()
+
+
+# --------------------------------------------------------------------------- #
+# Offline as a deliberate mode, not a failure
+# --------------------------------------------------------------------------- #
+
+def test_offline_is_a_provider_in_its_own_right(monkeypatch):
+    monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "offline")
+    assert config.extraction_provider() == "offline"
+    # It needs no credential and is not missing one. Answering False here would
+    # report a deliberate choice as a broken configuration.
+    assert config.has_credentials()
+    assert config.credential_source() == "no credential needed"
+    assert config.extraction_model() == "offline reader"
+
+
+def test_offline_reads_without_calling_a_provider(monkeypatch, tmp_path):
+    """No doomed API call per invoice, and no note - nothing is wrong."""
+    monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "offline")
+    called = []
+    monkeypatch.setattr(gemini, "extract", lambda p: called.append("gemini"))
+    monkeypatch.setattr(llm, "extract", lambda p: called.append("claude"))
+    monkeypatch.setattr(pipeline.heuristic, "extract", lambda p: invoice(invoice_number="OFF-1"))
+
+    doc, reader, note = pipeline._read_document(tmp_path / "any.pdf")
+    assert reader == "heuristic"
+    assert note is None, "offline is a choice; a note would look like a failure"
+    assert called == [], "no provider should have been called"
+    assert doc.invoice_number == "OFF-1"
+
+
+def test_offline_raises_no_training_warning(monkeypatch):
+    monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "offline")
+    monkeypatch.setenv("GEMINI_API_KEY", "leftover-key")
+    # Even with a stale key in the file, nothing is being sent anywhere.
+    assert config.training_risk() is None
+
+
+def test_a_stale_key_does_not_override_an_explicit_offline_choice(monkeypatch):
+    monkeypatch.setenv("GST_EXTRACTION_PROVIDER", "offline")
+    monkeypatch.setenv("GEMINI_API_KEY", "still-here")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "also-still-here")
+    assert config.extraction_provider() == "offline"

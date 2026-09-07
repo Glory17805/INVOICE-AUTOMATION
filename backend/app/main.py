@@ -60,14 +60,12 @@ from .models import DocStatus, DocumentType
 
 log = logging.getLogger("gst.backend")
 
-DROP_DIR = DATA_DIR / "dropbox"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Claim the data directory, prepare it, and give it up cleanly on exit."""
     ensure_dirs()
-    DROP_DIR.mkdir(parents=True, exist_ok=True)
 
     # Before anything opens a workbook: two processes sharing this directory
     # would overwrite each other's posted rows with no error anywhere.
@@ -256,7 +254,8 @@ def ready() -> JSONResponse:
     # upload, and precisely when someone checking readiness wants to be told.
     checks["reader"] = {
         "ok": True,
-        "degraded": fell_back or not credentialed,
+        # Offline is the mode working as configured, not a degradation.
+        "degraded": provider != "offline" and (fell_back or not credentialed),
         "detail": f"{provider}, credentials {'present' if credentialed else 'absent'}"
                   + ("" if credentialed else
                      " - documents will be captured by the offline reader until a key is set")
@@ -536,7 +535,6 @@ def info(user: dict = Depends(require_user)) -> dict:
         "approval_mode": approval_mode(),
         "counts": counts,
         "periods": known,
-        "drop_folder": str(DROP_DIR),
         "max_upload_mb": max_upload_bytes() // (1024 * 1024),
         "settings": appsettings.all_settings(),
     }
@@ -867,35 +865,6 @@ async def upload_documents(
     }
 
 
-@app.post("/api/ingest/folder")
-def ingest_folder(background: BackgroundTasks, user: dict = Depends(require_user)) -> dict:
-    """Pick up anything dropped in the watch folder.
-
-    This stands in for the email and scanner channels: point a mail rule or a
-    scanner's output at this folder and every new file enters the pipeline.
-    """
-    DROP_DIR.mkdir(parents=True, exist_ok=True)
-    seen = {Path(d["filename"]).name for d in store.all_documents()}
-    captured, errors = [], []
-    for path in sorted(DROP_DIR.iterdir()):
-        if not path.is_file() or path.name in seen:
-            continue
-        try:
-            captured.extend(pipeline.stage(path.read_bytes(), path.name, source="email"))
-        except pipeline.DuplicateUpload:
-            # A watch folder is read repeatedly by design; a file left sitting
-            # in it is the normal case, not something to report as a problem.
-            continue
-        except ValueError as exc:
-            errors.append(str(exc))
-
-    if captured:
-        accounts.record(user, "folder_ingested", {"count": len(captured)})
-    background.add_task(pipeline.process_many, [doc["id"] for doc in captured])
-    return {"captured": [_summarise(d) for d in captured], "errors": errors,
-            "reading": len(captured)}
-
-
 @app.post("/api/documents/{doc_id}/reprocess")
 def reprocess(doc_id: str, background: BackgroundTasks,
               user: dict = Depends(require_user)) -> dict:
@@ -1062,43 +1031,6 @@ def suppliers(user: dict = Depends(require_user)) -> list[dict]:
     """
     return history.summary()
 
-
-@app.get("/api/email/status")
-def email_status(user: dict = Depends(require_user)) -> dict:
-    """How invoices arrive without anyone uploading them.
-
-    Today that is a watch folder: point a mail rule, Outlook export or the
-    scanner at it. A direct mailbox connector is not wired yet, and this says so
-    rather than showing a Connected badge that means nothing.
-    """
-    DROP_DIR.mkdir(parents=True, exist_ok=True)
-    waiting = [p.name for p in sorted(DROP_DIR.iterdir()) if p.is_file()]
-    seen = {Path(d["filename"]).name for d in store.all_documents()}
-    settings = appsettings.all_settings()
-
-    return {
-        "mode": "watch_folder",
-        "connected": bool(settings.get("email_enabled")),
-        "folder": str(DROP_DIR),
-        "waiting": len([name for name in waiting if name not in seen]),
-        "waiting_files": [name for name in waiting if name not in seen][:20],
-        "mailbox_connector": {
-            "available": False,
-            "detail": "No mailbox is connected directly yet. Point a mail rule at the "
-                      "watch folder above, and invoices arriving by email will be picked "
-                      "up here.",
-        },
-        "rules": {
-            "process_pdf_attachments": settings.get("email_process_pdf_attachments"),
-            "mark_processed": settings.get("email_mark_processed"),
-            "notify": settings.get("email_notify"),
-        },
-    }
-
-
-# --------------------------------------------------------------------------- #
-# Settings
-# --------------------------------------------------------------------------- #
 
 @app.get("/api/settings")
 def get_settings(user: dict = Depends(require_user)) -> dict:
