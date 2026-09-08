@@ -1,0 +1,140 @@
+# Build and deploy on a push to master.
+#
+# Deliberately NOT automatic on every push to every branch: this deploys to a
+# system a company files tax returns from, so it runs on master only, and only
+# after the test job that gates it has passed.
+#
+# One-time setup, described in infra/README.md:
+#   AZURE_CREDENTIALS   a service principal with contributor on the group
+#   AZURE_RESOURCE_GROUP
+#   AZURE_PREFIX        matches the `prefix` used at deploy time
+#
+# Without those secrets the workflow skips rather than fails, so a fork or a
+# clone does not show a permanently red badge for a deployment it cannot do.
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  # One deployment at a time. Two overlapping runs would push images and
+  # restart the same single-instance app underneath each other.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: gst
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install -r backend/requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check backend
+
+      # Twice, on purpose. SQLite is what a developer runs and Postgres is what
+      # production runs, and a suite that only ever proves one of them is a
+      # suite that finds the dialect bug in Azure.
+      - name: Tests (SQLite)
+        run: python -m pytest backend/tests -q
+
+      - name: Tests (PostgreSQL)
+        env:
+          GST_TEST_DATABASE_URL: postgresql://postgres:ci@127.0.0.1:5432/gst
+        run: python -m pytest backend/tests -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check deployment is configured
+        id: configured
+        run: |
+          if [ -n "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "No AZURE_CREDENTIALS secret - skipping deployment." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Sign in to Azure
+        if: steps.configured.outputs.ready == 'true'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and push
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          PREFIX: ${{ secrets.AZURE_PREFIX }}
+        run: |
+          set -euo pipefail
+          REGISTRY=$(az acr show --name "${PREFIX}registry" --query loginServer -o tsv)
+          az acr login --name "${PREFIX}registry"
+
+          # Tagged with the commit as well as latest, so a bad deploy can be
+          # rolled back to a specific build rather than "whatever latest was".
+          for image in api web; do
+            dir=$([ "$image" = api ] && echo backend || echo frontend)
+            docker build --platform linux/amd64 \
+              -t "$REGISTRY/gst-$image:latest" \
+              -t "$REGISTRY/gst-$image:${GITHUB_SHA::12}" \
+              "$dir"
+            docker push --all-tags "$REGISTRY/gst-$image"
+          done
+
+      - name: Restart onto the new images
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          PREFIX: ${{ secrets.AZURE_PREFIX }}
+        run: |
+          az webapp restart -g "$GROUP" -n "${PREFIX}-api"
+          az webapp restart -g "$GROUP" -n "${PREFIX}-web"
+
+      - name: Wait for readiness
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          PREFIX: ${{ secrets.AZURE_PREFIX }}
+        run: |
+          set -euo pipefail
+          url="https://${PREFIX}-api.azurewebsites.net/api/ready"
+          for attempt in $(seq 1 40); do
+            body=$(curl -fsS --max-time 20 "$url" 2>/dev/null || true)
+            if [ -n "$body" ] && printf '%s' "$body" | grep -q '"status": *"ready"'; then
+              echo "Ready after $((attempt * 15))s."
+              printf '%s\n' "$body" | python -m json.tool >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "API did not report ready." >&2
+          exit 1
