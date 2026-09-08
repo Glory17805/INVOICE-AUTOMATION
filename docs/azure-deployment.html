@@ -1,0 +1,577 @@
+<title>Ira GST on Azure</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:      #f7f6f2;
+  --surface:     #ffffff;
+  --surface-2:   #f0efe9;
+  --line:        #dcdbd2;
+  --line-strong: #c2c1b5;
+  --ink:         #17201d;
+  --ink-2:       #4a544f;
+  --ink-3:       #767f79;
+  --accent:      #0f6e5c;
+  --accent-soft: #e2efeb;
+  --accent-ink:  #0a4f42;
+  --action:      #9c5c0c;
+  --action-soft: #f7ecda;
+  --critical:    #9d3520;
+  --critical-soft:#f8e6e1;
+  --shadow:      0 1px 2px rgba(23,32,29,.06), 0 4px 14px rgba(23,32,29,.05);
+
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --body:    "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #101614;
+    --surface:     #171f1c;
+    --surface-2:   #1e2724;
+    --line:        #2c3733;
+    --line-strong: #3d4a45;
+    --ink:         #e8ece9;
+    --ink-2:       #a9b3ae;
+    --ink-3:       #7c8681;
+    --accent:      #4fb79f;
+    --accent-soft: #16302a;
+    --accent-ink:  #7fd3bd;
+    --action:      #d99a4e;
+    --action-soft: #2f2415;
+    --critical:    #e08872;
+    --critical-soft:#3a1f18;
+    --shadow:      0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:      #101614;
+  --surface:     #171f1c;
+  --surface-2:   #1e2724;
+  --line:        #2c3733;
+  --line-strong: #3d4a45;
+  --ink:         #e8ece9;
+  --ink-2:       #a9b3ae;
+  --ink-3:       #7c8681;
+  --accent:      #4fb79f;
+  --accent-soft: #16302a;
+  --accent-ink:  #7fd3bd;
+  --action:      #d99a4e;
+  --action-soft: #32261492;
+  --critical:    #e08872;
+  --critical-soft:#3a1f18;
+  --shadow:      0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 6rem; }
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  padding: 4rem 0 2.5rem;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 2.5rem;
+}
+.eyebrow {
+  font-size: .72rem; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: 1rem;
+}
+h1 {
+  font-family: var(--display);
+  font-size: clamp(2.6rem, 6vw, 4.1rem);
+  font-weight: 500; line-height: 1.02; letter-spacing: -.022em;
+  margin: 0 0 1.1rem; text-wrap: balance;
+}
+.standfirst {
+  font-family: var(--display);
+  font-size: clamp(1.1rem, 2.2vw, 1.32rem);
+  line-height: 1.5; color: var(--ink-2);
+  max-width: 42ch; margin: 0;
+}
+
+.scorecard {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0; margin-top: 2.5rem;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--surface); overflow: hidden;
+}
+.score { padding: 1rem 1.1rem; border-right: 1px solid var(--line); }
+.score:last-child { border-right: 0; }
+.score .n {
+  font-family: var(--display); font-size: 1.85rem; font-weight: 600;
+  line-height: 1; display: block; font-variant-numeric: tabular-nums;
+}
+.score .k {
+  font-size: .7rem; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-3); margin-top: .4rem; display: block;
+}
+.score.good .n { color: var(--accent); }
+.score.todo .n { color: var(--action); }
+
+/* ---------- sections ---------- */
+
+section { margin-top: 4rem; }
+
+h2 {
+  font-family: var(--display);
+  font-size: 1.9rem; font-weight: 500; letter-spacing: -.015em;
+  margin: 0 0 .5rem; text-wrap: balance;
+}
+.lede { color: var(--ink-2); max-width: 62ch; margin: 0 0 1.75rem; }
+
+h3 {
+  font-size: .96rem; font-weight: 700; margin: 0 0 .35rem;
+  letter-spacing: -.005em;
+}
+
+p { max-width: 68ch; }
+
+/* ---------- architecture ---------- */
+
+.arch {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 3px; padding: 1.75rem 1.5rem 1.25rem; box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+.arch svg { display: block; min-width: 640px; width: 100%; height: auto; }
+.arch figcaption {
+  font-size: .8rem; color: var(--ink-3); margin-top: 1rem;
+  padding-top: .9rem; border-top: 1px solid var(--line); max-width: none;
+}
+
+/* ---------- built list ---------- */
+
+.built { display: flex; flex-direction: column; gap: 0; }
+.item {
+  display: grid; grid-template-columns: 1.6rem 1fr; gap: 0 .95rem;
+  padding: 1.15rem 0; border-bottom: 1px solid var(--line);
+}
+.item:first-child { border-top: 1px solid var(--line); }
+.tick {
+  width: 1.15rem; height: 1.15rem; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-ink);
+  display: grid; place-items: center; margin-top: .2rem;
+}
+.tick svg { width: .68rem; height: .68rem; }
+.item .body { min-width: 0; }
+.item p { margin: .3rem 0 0; color: var(--ink-2); font-size: .93rem; }
+.paths {
+  font-family: var(--mono); font-size: .76rem; color: var(--ink-3);
+  margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .3rem .9rem;
+}
+
+.proof {
+  margin-top: .7rem; padding: .6rem .8rem;
+  background: var(--accent-soft); border-left: 2px solid var(--accent);
+  border-radius: 0 2px 2px 0;
+  font-size: .84rem; color: var(--accent-ink);
+}
+.proof strong { font-weight: 700; }
+
+/* ---------- bugs found ---------- */
+
+.finds { display: grid; gap: .9rem; }
+.find {
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--critical); border-radius: 0 3px 3px 0;
+  padding: 1.05rem 1.2rem;
+}
+.find h3 { color: var(--ink); }
+.find p { margin: .35rem 0 0; color: var(--ink-2); font-size: .91rem; }
+.find .sym {
+  font-family: var(--mono); font-size: .78rem; color: var(--ink-3);
+  margin-top: .55rem; display: block;
+}
+
+/* ---------- steps ---------- */
+
+.steps { counter-reset: step; display: flex; flex-direction: column; gap: 0; }
+.step {
+  display: grid; grid-template-columns: 2.4rem 1fr; gap: 0 1.1rem;
+  padding: 1.6rem 0; border-bottom: 1px solid var(--line);
+}
+.step:first-child { border-top: 2px solid var(--ink); }
+.step::before {
+  counter-increment: step; content: counter(step, decimal-leading-zero);
+  font-family: var(--mono); font-size: .82rem; font-weight: 500;
+  color: var(--action); padding-top: .18rem; font-variant-numeric: tabular-nums;
+}
+.step .body { min-width: 0; }
+.step h3 { font-size: 1.06rem; }
+.step p { margin: .4rem 0 0; color: var(--ink-2); font-size: .94rem; }
+.meta {
+  display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .7rem;
+}
+.chip {
+  font-size: .69rem; font-weight: 600; letter-spacing: .045em;
+  text-transform: uppercase; padding: .2rem .5rem; border-radius: 2px;
+  background: var(--surface-2); color: var(--ink-3); border: 1px solid var(--line);
+}
+.chip.warn { background: var(--action-soft); color: var(--action); border-color: transparent; }
+.chip.once { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+
+pre {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 3px; padding: .85rem 1rem; margin: .85rem 0 0;
+  overflow-x: auto; font-family: var(--mono); font-size: .81rem;
+  line-height: 1.65; color: var(--ink);
+}
+pre .c { color: var(--ink-3); }
+code:not(pre code) {
+  font-family: var(--mono); font-size: .86em;
+  background: var(--surface-2); padding: .1em .34em; border-radius: 2px;
+  border: 1px solid var(--line);
+}
+
+/* ---------- tables ---------- */
+
+.tbl-wrap { overflow-x: auto; }
+table {
+  width: 100%; border-collapse: collapse; font-size: .89rem;
+  min-width: 30rem;
+}
+th {
+  text-align: left; font-size: .69rem; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3);
+  padding: 0 .9rem .55rem 0; border-bottom: 1px solid var(--line-strong);
+}
+td {
+  padding: .62rem .9rem .62rem 0; border-bottom: 1px solid var(--line);
+  vertical-align: top; color: var(--ink-2);
+}
+td:first-child { color: var(--ink); font-weight: 500; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tfoot td {
+  font-weight: 700; color: var(--ink); border-bottom: 0;
+  border-top: 2px solid var(--ink);
+}
+
+/* ---------- callout ---------- */
+
+.note {
+  background: var(--surface); border: 1px solid var(--line);
+  border-top: 3px solid var(--action); border-radius: 0 0 3px 3px;
+  padding: 1.15rem 1.3rem; margin-top: 1.5rem;
+}
+.note h3 { color: var(--action); margin-bottom: .3rem; }
+.note p { margin: 0; color: var(--ink-2); font-size: .92rem; }
+.note p + p { margin-top: .6rem; }
+
+.why { display: grid; gap: 1.4rem; }
+.why-row {
+  display: grid; grid-template-columns: 13rem 1fr; gap: 1.4rem;
+  padding-bottom: 1.4rem; border-bottom: 1px solid var(--line);
+}
+.why-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.why-row .q { font-weight: 700; font-size: .94rem; }
+.why-row .a { color: var(--ink-2); font-size: .93rem; }
+.why-row .a p { margin: 0; }
+.why-row .a p + p { margin-top: .6rem; }
+
+footer {
+  margin-top: 5rem; padding-top: 1.5rem; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--ink-3);
+}
+footer code { font-size: .95em; }
+
+@media (max-width: 640px) {
+  .why-row { grid-template-columns: 1fr; gap: .4rem; }
+  .step { grid-template-columns: 1.9rem 1fr; gap: 0 .8rem; }
+  .masthead { padding-top: 2.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">Deployment plan &middot; 8 September 2026</div>
+  <h1>Ira GST on Azure</h1>
+  <p class="standfirst">The application is containerised, moved onto PostgreSQL, and proven running as a full stack on this machine. What remains needs an Azure sign-in.</p>
+
+  <div class="scorecard">
+    <div class="score good"><span class="n">4</span><span class="k">Commits pushed</span></div>
+    <div class="score good"><span class="n">712</span><span class="k">Tests, both engines</span></div>
+    <div class="score good"><span class="n">3</span><span class="k">Bugs found</span></div>
+    <div class="score todo"><span class="n">5</span><span class="k">Steps left, yours</span></div>
+    <div class="score"><span class="n">$32</span><span class="k">Per month</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>The architecture</h2>
+  <p class="lede">Two containers on one App Service plan, a managed PostgreSQL server, and a file share for the workbooks. Central India, so Indian tax records stay in-country.</p>
+
+  <figure class="arch">
+    <svg viewBox="0 0 700 300" role="img" aria-label="Architecture: internet over HTTPS into an App Service plan holding the web and API containers; the API connects to PostgreSQL, Azure Files and the container registry.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" color="var(--line-strong)" stroke-width="1.25">
+        <line x1="350" y1="42" x2="350" y2="64" marker-end="url(#ar)"/>
+        <line x1="243" y1="130" x2="292" y2="130" marker-end="url(#ar)"/>
+        <line x1="350" y1="178" x2="350" y2="205" marker-end="url(#ar)"/>
+        <path d="M350 190 L140 190 L140 205" marker-end="url(#ar)"/>
+        <path d="M350 190 L560 190 L560 205" marker-end="url(#ar)"/>
+      </g>
+
+      <text x="350" y="26" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="12.5" font-weight="600" fill="var(--ink-2)">Internet</text>
+      <text x="366" y="58" font-family="JetBrains Mono, monospace" font-size="10" fill="var(--ink-3)">https &middot; free TLS</text>
+
+      <rect x="96" y="76" width="508" height="102" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)" stroke-width="1.25"/>
+      <text x="112" y="95" font-family="Public Sans, sans-serif" font-size="9.5" font-weight="700" letter-spacing="1.1" fill="var(--ink-3)">APP SERVICE PLAN &middot; LINUX B1 &middot; ONE INSTANCE</text>
+
+      <rect x="118" y="106" width="125" height="48" rx="3" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="180" y="127" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="12" font-weight="600" fill="var(--ink)">iragst-web</text>
+      <text x="180" y="142" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="var(--ink-3)">static server</text>
+
+      <rect x="292" y="106" width="190" height="48" rx="3" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="387" y="127" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="12" font-weight="600" fill="var(--ink)">iragst-api</text>
+      <text x="387" y="142" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" fill="var(--ink-3)">FastAPI + Tesseract</text>
+
+      <rect x="72" y="205" width="136" height="62" rx="3" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.25"/>
+      <text x="140" y="226" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="11.5" font-weight="600" fill="var(--ink)">PostgreSQL</text>
+      <text x="140" y="241" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">accounts, queue,</text>
+      <text x="140" y="253" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">audit trail</text>
+
+      <rect x="282" y="205" width="136" height="62" rx="3" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.25"/>
+      <text x="350" y="226" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="11.5" font-weight="600" fill="var(--ink)">Azure Files</text>
+      <text x="350" y="241" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">workbooks, PDFs,</text>
+      <text x="350" y="253" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">archive &rarr; /data</text>
+
+      <rect x="492" y="205" width="136" height="62" rx="3" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.25"/>
+      <text x="560" y="226" text-anchor="middle" font-family="Public Sans, sans-serif" font-size="11.5" font-weight="600" fill="var(--ink)">Registry</text>
+      <text x="560" y="241" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">gst-api, gst-web</text>
+      <text x="560" y="253" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8.5" fill="var(--ink-3)">tagged by commit</text>
+    </svg>
+    <figcaption>One instance is a correctness constraint, not a cost saving. <code>workbook.py</code> serialises writes with an in-process lock that is worth nothing across processes, and <code>singleton.py</code> takes a kernel lock so a second process fails loudly rather than silently overwriting a posted tax row.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>What is built</h2>
+  <p class="lede">All of it committed and pushed to <code>Glory17805/INVOICE-AUTOMATION</code>. Nothing below is scaffolding &mdash; each piece was run and checked.</p>
+
+  <div class="built">
+
+    <div class="item">
+      <span class="tick" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l4 4 7-9"/></svg></span>
+      <div class="body">
+        <h3>PostgreSQL, without giving up SQLite</h3>
+        <p>The database layer now picks its engine from <code>DATABASE_URL</code>. Tests keep the speed of a fresh SQLite file; the deployment gets an engine that survives its own filesystem. One schema template rather than two copies, so a table cannot be added to one engine and forgotten in the other &mdash; the dialect differences are held to three substitutions.</p>
+        <div class="paths"><span>backend/app/db.py</span><span>tools/migrate_to_postgres.py</span></div>
+        <div class="proof"><strong>356 tests pass on both engines.</strong> Verified against a live PostgreSQL 16 in Docker, each test in its own schema.</div>
+      </div>
+    </div>
+
+    <div class="item">
+      <span class="tick" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l4 4 7-9"/></svg></span>
+      <div class="body">
+        <h3>Your existing data can come across</h3>
+        <p>A migration tool reads <code>store.db</code> and writes through the application&rsquo;s own schema, so the destination is created exactly as the app expects. It refuses to run against a database that already holds rows, because the plausible mistake is running it twice and doubling the audit trail.</p>
+        <div class="paths"><span>backend/tools/migrate_to_postgres.py</span></div>
+        <div class="proof"><strong>Run against a copy of your real database.</strong> 74 rows moved &mdash; 3 accounts, 20 documents, 44 audit entries &mdash; and the re-run guard was confirmed to exit rather than duplicate.</div>
+      </div>
+    </div>
+
+    <div class="item">
+      <span class="tick" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l4 4 7-9"/></svg></span>
+      <div class="body">
+        <h3>Both halves containerised</h3>
+        <p>An API image carrying Tesseract, so scanned invoices are readable in the deployment and not only on a developer&rsquo;s machine, and a small image for the frontend. A compose file stands up the same shape Azure will run.</p>
+        <div class="paths"><span>backend/Dockerfile</span><span>frontend/Dockerfile</span><span>docker-compose.yml</span></div>
+        <div class="proof"><strong>Running now on this machine.</strong> API 825&thinsp;MB, frontend 189&thinsp;MB, Tesseract reporting 5.5.0 from inside the image. A signup through the real API landed in PostgreSQL, and a query in ALL CAPS matched the mixed-case address.</div>
+      </div>
+    </div>
+
+    <div class="item">
+      <span class="tick" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l4 4 7-9"/></svg></span>
+      <div class="body">
+        <h3>The whole environment described as code</h3>
+        <p>Bicep for every resource, a script that drives it in the right order, a GitHub Actions workflow that repeats it on a push to <code>master</code>, and a README covering the parts that are constraints rather than preferences.</p>
+        <div class="paths"><span>infra/main.bicep</span><span>infra/deploy.ps1</span><span>infra/README.md</span><span>.github/workflows/deploy.yml</span></div>
+        <div class="proof"><strong>Not yet run against a subscription.</strong> Resource naming rules, template outputs and the script&rsquo;s reads of them were checked statically; the deployment itself needs a sign-in.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>Three things this caught</h2>
+  <p class="lede">Each would have failed a first deployment, and each is cheaper to find on a laptop than in a crash-looping container.</p>
+
+  <div class="finds">
+    <div class="find">
+      <h3>The frontend bound the container&rsquo;s own loopback</h3>
+      <p><code>server.py</code> defaults to <code>127.0.0.1</code>, which is right on a laptop and useless in a container: traffic arriving on <code>eth0</code> from the port forward is refused by a process listening only on loopback.</p>
+      <span class="sym">curl: (52) Empty reply from server &mdash; reads like a crashed app, not a bind address</span>
+    </div>
+
+    <div class="find">
+      <h3>Readiness described a database it never opens</h3>
+      <p>The probe reported the SQLite path unconditionally, so a PostgreSQL deployment was described by a file it does not use &mdash; on the one screen you read to decide whether a deployment came up. It now names the actual server, password stripped.</p>
+      <span class="sym">was: /data/store.db &nbsp;&rarr;&nbsp; now: postgresql://postgres@db:5432/gst</span>
+    </div>
+
+    <div class="find">
+      <h3>The API will not start without the master workbook</h3>
+      <p>Correct behaviour &mdash; a GST system with no register to write into has nothing to offer &mdash; but it makes the workbook a <em>startup</em> dependency. In Azure it must be on the file share before the container starts, or the app crash-loops on a missing path. The deploy script uploads it first for exactly this reason.</p>
+      <span class="sym">WorkbookError: Source workbook not found at /master/workbook.xlsx</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What you need to do</h2>
+  <p class="lede">Five steps, in order. The first two are the only reason I could not finish this myself: installing the Azure CLI needs administrator rights, and signing in needs a browser.</p>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="body">
+        <h3>Install the Azure CLI</h3>
+        <p>I tried both routes that do not need administrator rights. <code>winget</code> registered nothing, and the <code>pip</code> install left only partial dependencies. The MSI is the reliable route and it needs an elevated prompt.</p>
+        <div class="meta"><span class="chip warn">Needs admin</span><span class="chip once">Once</span><span class="chip">~3 min</span></div>
+        <pre><span class="c"># In a PowerShell window opened with "Run as administrator"</span>
+winget install --id Microsoft.AzureCLI -e</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="body">
+        <h3>Sign in to Azure</h3>
+        <p>Opens a browser. Afterwards the credentials sit in <code>~/.azure</code> and I can use them for everything else &mdash; so once this is done, tell me and I will run the deployment.</p>
+        <div class="meta"><span class="chip warn">Needs a browser</span><span class="chip once">Once</span></div>
+        <pre>az login
+az account show   <span class="c"># confirm the right subscription</span></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="body">
+        <h3>Run the deployment</h3>
+        <p>Creates every resource, uploads the master workbook, builds and pushes both images, and waits for the API to report ready. Roughly fifteen minutes, most of it PostgreSQL. Safe to re-run.</p>
+        <div class="meta"><span class="chip">~15 min</span><span class="chip">I can run this for you</span></div>
+        <pre>./infra/deploy.ps1 `
+    -ResourceGroup ira-gst `
+    -MasterWorkbook "D:\IRA\01 Ira Innovations May-26 GST Calculation.xlsx"</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="body">
+        <h3>Bring your existing data across</h3>
+        <p>Optional. Without it the deployment starts empty and the first account you create becomes the administrator. With it, your three accounts, twenty documents and audit trail come too. Add your own IP to the database firewall first &mdash; the README has the command, and remember to remove it afterwards.</p>
+        <div class="meta"><span class="chip">Optional</span><span class="chip">I can run this for you</span></div>
+        <pre>cd backend
+python -m tools.migrate_to_postgres --sqlite data/store.db</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="body">
+        <h3>Deal with the Claude API credits</h3>
+        <p>Unrelated to Azure, but it decides how well the deployed system reads invoices. Your key authenticates correctly; the organisation behind it has no spendable balance, so every read falls back to the offline reader. Ask your administrator for credits on the org, or &mdash; if credits already exist &mdash; a non-zero spend limit on your key&rsquo;s workspace, which costs nothing extra.</p>
+        <div class="meta"><span class="chip warn">Blocked on your company</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <h3>The deployment works without step 5</h3>
+    <p>The offline reader is not a stub. It parses the label-then-value layout your billing software emits, reads both GSTINs, place of supply, HSN and the totals row, and now does OCR for scans. It never guesses: anything unreadable stays null, and every offline-read document goes to Quick Review rather than being auto-confirmed.</p>
+    <p>So you can deploy, upload, review and post today. It simply means more manual checking per invoice until credits arrive &mdash; and re-reading afterwards will redo them properly.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What it costs</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Resource</th><th>Tier</th><th class="num">Per month</th><th>Why this size</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>App Service Plan</td><td>Linux B1</td><td class="num">~$13</td><td>Hosts both containers. Cannot scale out regardless of tier.</td></tr>
+        <tr><td>PostgreSQL</td><td>Burstable B1ms</td><td class="num">~$12</td><td>32&thinsp;GB, 7-day point-in-time restore.</td></tr>
+        <tr><td>Container Registry</td><td>Basic</td><td class="num">~$5</td><td>Two images, tagged per commit.</td></tr>
+        <tr><td>Storage</td><td>Standard LRS</td><td class="num">~$2</td><td>100&thinsp;GB share, 7-day soft delete.</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td>Total</td><td></td><td class="num">~$32</td><td></td></tr>
+      </tfoot>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Decisions worth knowing</h2>
+  <div class="why">
+
+    <div class="why-row">
+      <div class="q">Why move off SQLite at all?</div>
+      <div class="a"><p>Every persistent disk App Service offers is SMB-backed, and SQLite&rsquo;s WAL mode uses shared-memory mapping that SMB does not support. Turning WAL off makes it technically work and leaves a database of tax records one dropped SMB connection away from corruption. <code>singleton.py</code> already goes to some length to prevent a silently lost tax row; accepting that same risk from the storage layer would have been inconsistent.</p></div>
+    </div>
+
+    <div class="why-row">
+      <div class="q">Why App Service rather than Container Apps?</div>
+      <div class="a"><p>Container Apps is built around scaling replicas, and this application cannot have two. App Service pins to one instance cleanly and runs both containers on a single plan.</p></div>
+    </div>
+
+    <div class="why-row">
+      <div class="q">Why does email need a database extension?</div>
+      <div class="a"><p>Accounts are looked up with <code>WHERE email = ?</code> and rely entirely on the column collation to match <code>Priya@</code> against <code>priya@</code>. SQLite spells that <code>COLLATE NOCASE</code>; PostgreSQL spells it <code>CITEXT</code>. Using the extension rather than rewriting those lookups keeps both engines behaviourally identical &mdash; which is the whole basis for trusting a SQLite test run to say anything about production.</p><p>It has to be allowlisted through the <code>azure.extensions</code> server parameter, which the Bicep template does. Without that, the very first request would fail.</p></div>
+    </div>
+
+    <div class="why-row">
+      <div class="q">Why build for linux/amd64 explicitly?</div>
+      <div class="a"><p>App Service runs amd64. A machine defaulting to ARM would push an image that cannot start there, and the failure appears as a container exiting immediately with no useful log.</p></div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>Known limits</h2>
+  <p class="lede">Stated rather than hidden, so none of them is a surprise later.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Limit</th><th>Consequence</th><th>If it matters</th></tr></thead>
+      <tbody>
+        <tr><td>Public endpoint</td><td>The app&rsquo;s own accounts are the only barrier.</td><td>Add an IP allowlist with <code>az webapp config access-restriction add</code>.</td></tr>
+        <tr><td>Database firewall allows all Azure services</td><td>Broader than this one app needs.</td><td>Narrow to the plan&rsquo;s outbound addresses, or move to a private endpoint.</td></tr>
+        <tr><td>Registry uses its admin user</td><td>A shared credential rather than a scoped identity.</td><td>A managed identity with <code>AcrPull</code>, once subscription-level permissions allow.</td></tr>
+        <tr><td>No staging slot</td><td>A bad image goes straight to the only environment.</td><td>Images are tagged per commit, so rollback means pointing at a specific tag.</td></tr>
+        <tr><td>Single instance</td><td>No redundancy; a restart is a brief outage.</td><td>Inherent to the workbook design. Changing it means moving posting off the shared file.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  Commits <code>f2a4253</code>, <code>04ba1f1</code>, <code>66473cf</code> &mdash; pushed to <code>Glory17805/INVOICE-AUTOMATION</code>.
+  The local stack is running now at <code>localhost:3000</code>; <code>docker compose down</code> stops it, <code>down -v</code> also discards its data.
+</footer>
+
+</div>
