@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,6 +83,26 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         singleton.release()
+
+
+def _database_detail() -> str:
+    """Which database this process is actually talking to.
+
+    Reporting db.path() unconditionally described a SQLite file that a
+    PostgreSQL deployment never opens - on the one screen someone reads while
+    working out whether a deployment came up correctly. The password is
+    stripped rather than the whole URL hidden, because "which server, which
+    database" is exactly what that person is checking.
+    """
+    if db.dialect() == "sqlite":
+        return str(db.path())
+
+    parsed = urlsplit(db.url())
+    host = parsed.hostname or "?"
+    port = f":{parsed.port}" if parsed.port else ""
+    name = parsed.path.lstrip("/") or "?"
+    user = f"{parsed.username}@" if parsed.username else ""
+    return f"postgresql://{user}{host}{port}/{name}"
 
 
 def _recover_stranded_documents() -> None:
@@ -228,7 +249,7 @@ def ready() -> JSONResponse:
     try:
         with db.connect() as connection:
             connection.execute("SELECT 1 FROM documents LIMIT 1").fetchone()
-        checks["database"] = {"ok": True, "detail": str(db.path())}
+        checks["database"] = {"ok": True, "detail": _database_detail()}
     except Exception as exc:
         checks["database"] = {"ok": False, "detail": str(exc)}
 

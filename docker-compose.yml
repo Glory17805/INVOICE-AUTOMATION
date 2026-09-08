@@ -1,0 +1,67 @@
+# The deployment, on a laptop.
+#
+# Same two images and the same PostgreSQL that Azure runs, so a problem with
+# the containers is found here rather than after a push. It is not how you
+# develop day to day - `python -m uvicorn` against SQLite is faster to reload
+# and needs no rebuild - it is how you check the thing being deployed.
+#
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# The data volume mimics the Azure Files share: workbooks, incoming PDFs and
+# the archive live there and survive `docker compose down`. `down -v` removes
+# them, which is the local equivalent of deleting the share.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: gst
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      # The API's own startup runs migrations, so it must not begin until the
+      # server is genuinely accepting connections - not merely listening.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gst"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:local-development-only@db:5432/gst
+      GST_DATA_DIR: /data
+      GST_FRONTEND_ORIGINS: http://localhost:3000
+      GST_EXTRACTION_PROVIDER: ${GST_EXTRACTION_PROVIDER:-offline}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GST_SOURCE_WORKBOOK: /master/workbook.xlsx
+    volumes:
+      - data:/data
+      # The master workbook, read-only. The app refuses to start without it -
+      # deliberately, since a GST system with no register to write into has
+      # nothing to offer - so this is required rather than optional, and the
+      # same ordering applies in Azure: the workbook must be on the file share
+      # before the container starts, or it crash-loops on a missing path.
+      - ${GST_MASTER_WORKBOOK:?set GST_MASTER_WORKBOOK to the master .xlsx, e.g. ../01 Ira Innovations May-26 GST Calculation.xlsx}:/master/workbook.xlsx:ro
+    ports:
+      - "8000:8000"
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    environment:
+      # The browser resolves this, not the container, so it is localhost and
+      # not the compose service name.
+      GST_API_BASE: http://localhost:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  db:
+  data:

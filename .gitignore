@@ -6,3 +6,6 @@ __pycache__/
 
 # Backups are copies of data/, which is itself not tracked.
 backend/backups/
+
+# Local docker-compose settings (machine-specific paths).
+/.env
