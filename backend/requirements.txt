@@ -17,3 +17,8 @@ openpyxl>=3.1,<4.0
 pypdf>=5.4,<6.0
 anthropic>=1.0,<2.0
 google-genai>=2.19,<3
+
+# PostgreSQL driver. Only imported when DATABASE_URL is set, so a laptop
+# running on SQLite never loads it - but it ships in the image because the
+# deployment has no way to install it later.
+psycopg[binary]>=3.2,<4.0
