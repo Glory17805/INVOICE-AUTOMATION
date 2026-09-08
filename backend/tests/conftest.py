@@ -74,6 +74,14 @@ def isolated_database(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "STORE_PATH", scratch)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
+    # Posting now takes a backup first, and backup_dir() is derived from
+    # config.DATA_DIR - which the two lines above do not touch. Left alone,
+    # every test that posts a document would write a real archive into the
+    # real backups directory, which is the 337-document mistake wearing a
+    # different hat. Pointed at the same scratch space so the backup code is
+    # still genuinely exercised rather than stubbed out.
+    monkeypatch.setenv("GST_BACKUP_DIR", str(tmp_path / "isolated-backups"))
+
     schema = _postgres_schema(monkeypatch) if os.environ.get("GST_TEST_DATABASE_URL") else None
 
     db.forget()

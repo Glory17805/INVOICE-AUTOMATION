@@ -24,15 +24,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import sqlite3
 import tempfile
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import db
 from .config import ARCHIVE_DIR, DATA_DIR, WORKBOOK_DIR, setting
+
+log = logging.getLogger("gst.backup")
 
 MANIFEST = "manifest.json"
 
@@ -176,6 +179,49 @@ def restore(path: Path, into: Path | None = None) -> Path:
 def latest() -> Path | None:
     archives = sorted(backup_dir().glob("gst-backup-*.zip"), key=lambda p: p.name)
     return archives[-1] if archives else None
+
+
+def max_age_minutes() -> int:
+    raw = setting("GST_BACKUP_MAX_AGE_MINUTES", "60")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 60
+
+
+def ensure_recent(note: str = "") -> Path | None:
+    """Guarantee a restore point no older than GST_BACKUP_MAX_AGE_MINUTES.
+
+    Called before posting, which is the only step here that cannot be undone
+    from inside the app. Rate-limited rather than run per post: an accountant
+    clearing a morning's queue posts thirty documents, and thirty verified
+    archives would be thirty times the cost for no more safety than one taken
+    at the start.
+
+    It matters most for a deployment keeping SQLite on a network share, where
+    a dropped connection mid-write can damage the file itself. A recent
+    archive turns that from losing the filing history into losing an hour of
+    it.
+
+    Never raises. A backup that fails is a serious problem and still a worse
+    reason to block someone from filing a return than to let the post proceed
+    and complain loudly in the log - the alternative is an app that refuses to
+    work because its safety net is broken.
+    """
+    window = max_age_minutes()
+    if window == 0:
+        return None
+
+    try:
+        newest = latest()
+        if newest is not None:
+            age = datetime.now(UTC) - datetime.fromtimestamp(newest.stat().st_mtime, UTC)
+            if age < timedelta(minutes=window):
+                return newest
+        return create(note)   # create() verifies and prunes for us
+    except Exception:
+        log.exception("Automatic backup failed; continuing without a fresh restore point.")
+        return None
 
 
 def main() -> None:

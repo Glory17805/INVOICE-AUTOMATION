@@ -9,3 +9,6 @@ backend/backups/
 
 # Local docker-compose settings (machine-specific paths).
 /.env
+
+# Static frontend build output, generated per deployment.
+frontend/dist/

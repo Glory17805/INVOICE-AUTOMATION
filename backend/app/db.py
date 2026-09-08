@@ -290,6 +290,28 @@ def connect():
         connection.close()
 
 
+def journal_mode() -> str:
+    """WAL on a local disk, DELETE on a network share.
+
+    WAL is the better mode and the default: it lets a reader and a writer
+    overlap instead of blocking, which is exactly what inbox polling does
+    against a background read.
+
+    It cannot be used on SMB. WAL coordinates readers and writers through a
+    shared-memory index (`-shm`) backed by mmap, and SMB does not implement the
+    shared memory it needs; the failure is not a clean error but a database
+    that reads as corrupt to the next process to open it. Every persistent
+    volume Azure offers a container is SMB-backed, so a deployment that keeps
+    SQLite has to set GST_SQLITE_JOURNAL=DELETE.
+
+    That mode is slower - each write takes an exclusive lock for the length of
+    the transaction - which does not matter here: one process, one writer, and
+    a queue measured in tens of documents.
+    """
+    configured = os.environ.get("GST_SQLITE_JOURNAL", "WAL").strip().upper()
+    return configured if configured in ("WAL", "DELETE", "TRUNCATE", "PERSIST") else "WAL"
+
+
 def _connect_sqlite():
     ensure_dirs()
     file = path()
@@ -297,10 +319,17 @@ def _connect_sqlite():
 
     connection = sqlite3.connect(file, timeout=15)
     connection.row_factory = sqlite3.Row
-    # WAL lets a reader and a writer overlap instead of blocking, which is
-    # what inbox polling does against a background read.
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA synchronous=NORMAL")
+
+    mode = journal_mode()
+    connection.execute(f"PRAGMA journal_mode={mode}")
+    # NORMAL is safe under WAL, where a lost write costs the last transaction
+    # and nothing structural. Without WAL it is not: on a network share, a
+    # connection dropped between the write and the flush can leave the file
+    # itself inconsistent. FULL costs an fsync per commit and buys back the
+    # guarantee that a posted tax row is either fully written or not there.
+    connection.execute(
+        "PRAGMA synchronous=" + ("NORMAL" if mode == "WAL" else "FULL")
+    )
     connection.execute("PRAGMA foreign_keys=ON")
     return connection
 

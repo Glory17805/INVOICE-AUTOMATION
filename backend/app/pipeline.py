@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
-from . import history, runtime, store, uploads, workbook
+from . import backup, history, runtime, store, uploads, workbook
 from . import period as periods
 from .config import (
     ARCHIVE_DIR,
@@ -608,6 +608,11 @@ def confirm(doc_id: str, *, override: bool = False, actor: dict | None = None) -
         "quantity": doc.quantity or (doc.line_items[0].quantity if doc.line_items else None),
         "unit_rate": doc.line_items[0].unit_rate if doc.line_items else None,
     }
+
+    # A restore point before the only irreversible step in the system. Cheap
+    # because it is rate-limited: the first post of a session pays for it and
+    # the rest of that session's posts are covered by it.
+    backup.ensure_recent("before posting")
 
     sheet, row = workbook.post_row(treatment, meta, period)
 
