@@ -29,6 +29,7 @@ param(
     [Parameter(Mandatory = $true)][string] $MasterWorkbook,
     [string] $Prefix = 'iragst',
     [string] $Location = 'centralindia',
+    [ValidateSet('postgres', 'sqlite')][string] $Database = 'postgres',
     [securestring] $GhcrToken,
     [securestring] $AnthropicKey,
     [switch] $SkipInfra
@@ -51,6 +52,17 @@ Write-Host "  subscription : $($account.name)"
 
 $plainGhcr = if ($GhcrToken) { [System.Net.NetworkCredential]::new('', $GhcrToken).Password } else { '' }
 $plainKey  = if ($AnthropicKey) { [System.Net.NetworkCredential]::new('', $AnthropicKey).Password } else { '' }
+
+# Only the app ever uses this, through a Container Apps secret, so a human
+# never needs to type or keep it. Re-running regenerates it and the template
+# updates the server and the secret together.
+$plainDbPassword = ''
+if ($Database -eq 'postgres') {
+    $bytes = [byte[]]::new(24)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $plainDbPassword = ([Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', '') + 'aZ9!'
+}
+Write-Host "  database     : $Database$(if ($Database -eq 'postgres') { ' (free for 12 months on an Azure free account)' })"
 
 # The containerapp commands live in an extension. Installing it up front avoids
 # an interactive prompt in the middle of a deployment.
@@ -96,11 +108,13 @@ if ($LASTEXITCODE -ne 0) {
 # --- Storage first, so the workbook is in place before the API starts ------
 
 if (-not $SkipInfra) {
-    Step 'Deploying infrastructure'
+    Step "Deploying infrastructure$(if ($Database -eq 'postgres') { ' (PostgreSQL takes several minutes)' })"
     az deployment group create `
         --resource-group $ResourceGroup `
+        --name main-free `
         --template-file "$PSScriptRoot/main-free.bicep" `
         --parameters prefix=$Prefix location=$Location githubOwner=$GithubOwner `
+                     database=$Database dbAdminPassword=$plainDbPassword `
                      anthropicApiKey=$plainKey ghcrToken=$plainGhcr `
         --output none
     if ($LASTEXITCODE -ne 0) { throw 'Infrastructure deployment failed.' }

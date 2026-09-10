@@ -1,26 +1,32 @@
 // The no-cost deployment.
 //
 //   az deployment group create -g <group> -f infra/main-free.bicep \
-//      -p prefix=iragst githubOwner=Glory17805
+//      -p prefix=iragst githubOwner=Glory17805 dbAdminPassword=<generated>
 //
-// Everything here sits inside a free allowance, with one exception noted
-// below. It trades a managed database for SQLite on the file share, which is
-// the only way to reach zero on a pay-as-you-go subscription: Azure's free
-// PostgreSQL offer applies to free accounts only, and this is a company
-// subscription.
+// Container Apps for the API, scaling to zero between sessions and staying
+// inside the monthly free grant. Static Web Apps for the frontend, whose Free
+// tier genuinely is free. GitHub Container Registry for the image, so there is
+// no registry bill. Azure Files for the workbooks and PDFs.
 //
-// What that trade costs, and how it is contained:
+// The database is a parameter, because which one is free depends on the
+// subscription rather than on anything technical:
 //
-//   SQLite cannot use WAL on SMB - WAL coordinates through shared memory that
-//   SMB does not implement - so the container runs with journal_mode=DELETE
-//   and synchronous=FULL. That is safe for one writer, which is all this app
-//   ever has, but a connection dropped mid-write can still damage the file.
-//   The app takes a verified backup before every posting session, which turns
-//   that from losing the filing history into losing an hour of it.
+//   postgres  On an Azure free account, Flexible Server B1ms is free for the
+//             first 12 months, which makes the right answer also the free one.
+//             This is the default.
 //
-// The exception: Azure Files bills for what is stored. A few hundred MB of
-// workbooks and PDFs is a few cents a month. There is no free persistent file
-// storage on Azure, so this is as close to zero as the platform allows.
+//   sqlite    On a pay-as-you-go subscription there is no free managed
+//             database, so reaching zero means SQLite on the file share. That
+//             works, and needs care: WAL cannot be used on SMB - it
+//             coordinates through shared memory SMB does not implement, and
+//             fails as a database that reads as corrupt rather than an error -
+//             so the container runs journal_mode=DELETE with synchronous=FULL,
+//             and the app takes a verified backup before every posting
+//             session. That turns a mid-write disconnection from losing the
+//             filing history into losing an hour of it.
+//
+// Azure Files bills for what is stored either way. A few hundred MB is a few
+// cents a month, and a free account's first 12 months include more than that.
 
 @description('Short name used as the prefix for every resource.')
 @minLength(3)
@@ -33,6 +39,17 @@ param location string = 'centralindia'
 @description('GitHub account or org owning the container images on ghcr.io.')
 param githubOwner string
 
+@description('Managed PostgreSQL, or SQLite on the file share. See the note above.')
+@allowed([ 'postgres', 'sqlite' ])
+param database string = 'postgres'
+
+@description('PostgreSQL administrator login. Ignored when database is sqlite.')
+param dbAdminUser string = 'gstadmin'
+
+@description('PostgreSQL administrator password. Required when database is postgres.')
+@secure()
+param dbAdminPassword string = ''
+
 @description('Claude API key. Empty deploys the offline reader, which is fully functional.')
 @secure()
 param anthropicApiKey string = ''
@@ -41,11 +58,14 @@ param anthropicApiKey string = ''
 @secure()
 param ghcrToken string = ''
 
+var usePostgres = database == 'postgres'
 var storageName = '${prefix}store'
 var shareName = 'data'
 var envName = '${prefix}-env'
 var apiName = '${prefix}-api'
 var webName = '${prefix}-web'
+var dbServerName = '${prefix}-db'
+var dbName = 'gst'
 var imageBase = 'ghcr.io/${toLower(githubOwner)}'
 
 // --------------------------------------------------------------------------
@@ -85,6 +105,67 @@ resource share 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01
     shareQuota: 20
   }
 }
+
+// --------------------------------------------------------------------------
+// PostgreSQL - only when asked for
+// --------------------------------------------------------------------------
+
+resource database_ 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = if (usePostgres) {
+  name: dbServerName
+  location: location
+  sku: {
+    // The exact SKU an Azure free account covers for 12 months. Changing it
+    // is what turns this deployment from free into billed.
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
+  }
+  properties: {
+    version: '16'
+    administratorLogin: dbAdminUser
+    administratorLoginPassword: dbAdminPassword
+    storage: { storageSizeGB: 32 }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: { mode: 'Disabled' }
+    network: { publicNetworkAccess: 'Enabled' }
+  }
+}
+
+resource gstDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = if (usePostgres) {
+  parent: database_
+  name: dbName
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+// citext is unavailable until allowlisted here. users.email is declared CITEXT
+// so case-insensitive login behaves identically to SQLite; without this the
+// very first request fails with 'type "citext" does not exist'.
+resource allowCitext 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = if (usePostgres) {
+  parent: database_
+  name: 'azure.extensions'
+  properties: {
+    value: 'CITEXT'
+    source: 'user-override'
+  }
+}
+
+resource allowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-06-01-preview' = if (usePostgres) {
+  parent: database_
+  name: 'allow-azure-services'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+var databaseUrl = usePostgres
+  ? 'postgresql://${dbAdminUser}:${uriComponent(dbAdminPassword)}@${dbServerName}.postgres.database.azure.com:5432/${dbName}?sslmode=require'
+  : ''
 
 // --------------------------------------------------------------------------
 // Container Apps
@@ -134,7 +215,8 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
       }
       secrets: concat(
         [ { name: 'anthropic-key', value: anthropicApiKey } ],
-        empty(ghcrToken) ? [] : [ { name: 'ghcr-token', value: ghcrToken } ]
+        empty(ghcrToken) ? [] : [ { name: 'ghcr-token', value: ghcrToken } ],
+        usePostgres ? [ { name: 'database-url', value: databaseUrl } ] : []
       )
       registries: empty(ghcrToken) ? [] : [
         {
@@ -156,19 +238,24 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
-          env: [
+          env: concat([
             { name: 'GST_DATA_DIR', value: '/data' }
             { name: 'GST_SOURCE_WORKBOOK', value: '/data/master/workbook.xlsx' }
             { name: 'GST_BACKUP_DIR', value: '/data/backups' }
-            // Required, not optional: WAL does not work over SMB, and the
-            // failure is a database that reads as corrupt rather than an error.
-            { name: 'GST_SQLITE_JOURNAL', value: 'DELETE' }
+            // Backups matter on both engines - they also cover the workbooks
+            // and the archived PDFs, which no database backup touches.
             { name: 'GST_BACKUP_MAX_AGE_MINUTES', value: '60' }
             { name: 'GST_FRONTEND_ORIGINS', value: 'https://${web.properties.defaultHostname}' }
             { name: 'GST_APPROVAL_MODE', value: 'flagged_only' }
             { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-key' }
             { name: 'GST_EXTRACTION_PROVIDER', value: empty(anthropicApiKey) ? 'offline' : 'claude' }
-          ]
+          ],
+          usePostgres
+            ? [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
+            // Required, not optional, when the database is a file on the
+            // share: WAL does not work over SMB, and the failure is a
+            // database that reads as corrupt rather than an error.
+            : [ { name: 'GST_SQLITE_JOURNAL', value: 'DELETE' } ])
           volumeMounts: [
             { volumeName: 'data', mountPath: '/data' }
           ]
@@ -220,3 +307,6 @@ output webName string = web.name
 output storageAccount string = storage.name
 output shareName string = shareName
 output imageBase string = imageBase
+output apiName string = apiName
+output engine string = database
+output databaseHost string = usePostgres ? '${dbServerName}.postgres.database.azure.com' : 'sqlite on the file share'
