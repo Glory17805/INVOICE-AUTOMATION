@@ -38,8 +38,28 @@ jobs:
         # No provider key in CI, which is the point: conftest forces the offline
         # reader, so a test that reaches for the network fails here rather than
         # silently spending someone's quota.
+        #
+        # -ra prints the skip reasons. A run here is ~56 tests short of a local
+        # one, because the workbook tests need the client's real file and it is
+        # deliberately not in the repository. Printing why keeps a green tick
+        # from being read as "everything was checked".
         working-directory: backend
-        run: python -m pytest tests
+        run: python -m pytest tests -ra
+
+      - name: Say what this run did not cover
+        if: always()
+        run: |
+          {
+            echo "### Coverage note"
+            echo
+            echo "The workbook tests assert against the client's real sheet - its own"
+            echo "formula idioms and number formats - rather than a fixture that would"
+            echo "only agree with itself. That file is a filing history and is not in"
+            echo "the repository, so those tests **skip here** and run only on a machine"
+            echo "that has it."
+            echo
+            echo "A green tick above means everything else passed."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check for control characters in tracked text
         # A README once shipped with real 0x08 and 0x0c bytes where escape text

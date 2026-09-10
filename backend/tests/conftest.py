@@ -20,7 +20,8 @@ from urllib.parse import quote
 
 import pytest
 
-from app import db, pipeline, store
+from app import db, pipeline, store, workbook
+from app.config import source_workbook
 
 
 def pytest_configure(config):
@@ -28,6 +29,40 @@ def pytest_configure(config):
         "markers",
         "live_llm: test may call a real LLM provider; excluded from the offline default.",
     )
+
+
+@pytest.fixture(autouse=True)
+def skip_without_master_workbook(monkeypatch):
+    """Skip the workbook tests when the client's workbook is not on this machine.
+
+    test_workbook.py is deliberate about running against a throwaway copy of
+    the real file rather than a fixture: the assertions are about that sheet's
+    own formula idioms and number formats, and a fixture we wrote would only
+    confirm it agrees with itself.
+
+    The cost is that those tests cannot run anywhere the file is absent, and it
+    must stay absent from the repository - it is a client's filing history.
+    On a fresh clone this surfaced as 25 setup errors and a permanently red
+    CI, which is worse than useless: a build that is always red reports
+    nothing when it goes red for a real reason.
+
+    So the one condition is converted into a skip, narrowly. Only calls that
+    genuinely need the source file are intercepted, so a test failing for any
+    other reason still fails.
+    """
+    if source_workbook().exists():
+        return
+
+    reason = (
+        f"needs the master workbook at {source_workbook()}, which is a client's "
+        "filing history and is deliberately not in the repository"
+    )
+
+    def skip(*_args, **_kwargs):
+        pytest.skip(reason)
+
+    monkeypatch.setattr(workbook, "ensure_working_copy", skip)
+    monkeypatch.setattr(workbook, "master_period", skip)
 
 
 @pytest.fixture(autouse=True)

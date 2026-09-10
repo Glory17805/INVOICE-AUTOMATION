@@ -40,6 +40,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # An image reference must be lowercase, and github.repository_owner
+      # preserves the account's own capitalisation - "Glory17805". Interpolated
+      # straight into a tag that produces an invalid reference and the push
+      # fails with an error about the name, not about the case.
+      - name: Lowercase the owner
+        id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -50,12 +58,12 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/gst-api:latest
-            ghcr.io/${{ github.repository_owner }}/gst-api:${{ github.sha }}
+            ghcr.io/${{ steps.owner.outputs.name }}/gst-api:latest
+            ghcr.io/${{ steps.owner.outputs.name }}/gst-api:${{ github.sha }}
           # Layer cache in the registry, so a code-only change does not
           # reinstall the ~400MB OCR dependency tree on every run.
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/gst-api:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/gst-api:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-api:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-api:buildcache,mode=max
 
       - name: Say what to do next
         run: |
