@@ -36,6 +36,15 @@ param prefix string = 'iragst'
 @description('Region. Central India keeps Indian tax records in-country.')
 param location string = 'centralindia'
 
+@description('''
+Region for the Static Web App. Separate because Static Web Apps runs in only a
+handful of regions and centralindia is not one of them - a deployment using the
+main location fails on this resource alone. Only the built HTML, CSS and JS
+live here; every invoice, workbook and database row stays in `location`.
+''')
+@allowed([ 'eastus2', 'centralus', 'westus2', 'westeurope', 'eastasia' ])
+param webLocation string = 'eastasia'
+
 @description('GitHub account or org owning the container images on ghcr.io.')
 param githubOwner string
 
@@ -213,8 +222,12 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
           allowedHeaders: [ '*' ]
         }
       }
+      // Every secret declared here must carry a value: Container Apps rejects
+      // an empty one outright rather than treating it as unset. So a secret
+      // exists only when there is something to put in it, and the matching
+      // environment variable is added on the same condition below.
       secrets: concat(
-        [ { name: 'anthropic-key', value: anthropicApiKey } ],
+        empty(anthropicApiKey) ? [] : [ { name: 'anthropic-key', value: anthropicApiKey } ],
         empty(ghcrToken) ? [] : [ { name: 'ghcr-token', value: ghcrToken } ],
         usePostgres ? [ { name: 'database-url', value: databaseUrl } ] : []
       )
@@ -247,9 +260,11 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'GST_BACKUP_MAX_AGE_MINUTES', value: '60' }
             { name: 'GST_FRONTEND_ORIGINS', value: 'https://${web.properties.defaultHostname}' }
             { name: 'GST_APPROVAL_MODE', value: 'flagged_only' }
-            { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-key' }
             { name: 'GST_EXTRACTION_PROVIDER', value: empty(anthropicApiKey) ? 'offline' : 'claude' }
           ],
+          empty(anthropicApiKey)
+            ? []
+            : [ { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-key' } ],
           usePostgres
             ? [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
             // Required, not optional, when the database is a file on the
@@ -287,7 +302,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
 
 resource web 'Microsoft.Web/staticSites@2023-12-01' = {
   name: webName
-  location: location
+  location: webLocation
   sku: {
     name: 'Free'
     tier: 'Free'
