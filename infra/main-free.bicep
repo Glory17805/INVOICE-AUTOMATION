@@ -16,14 +16,22 @@
 //             This is the default.
 //
 //   sqlite    On a pay-as-you-go subscription there is no free managed
-//             database, so reaching zero means SQLite on the file share. That
-//             works, and needs care: WAL cannot be used on SMB - it
-//             coordinates through shared memory SMB does not implement, and
-//             fails as a database that reads as corrupt rather than an error -
-//             so the container runs journal_mode=DELETE with synchronous=FULL,
-//             and the app takes a verified backup before every posting
-//             session. That turns a mid-write disconnection from losing the
-//             filing history into losing an hour of it.
+//             database, so reaching zero means SQLite - but NOT on the share.
+//             Azure Files does not honour the byte-range locks SQLite takes,
+//             and the result is not slowness but failure: creating the schema
+//             on an empty file dies with "database is locked". That was
+//             verified here with a single replica and a freshly cleaned share,
+//             so it is neither contention between processes nor a damaged
+//             file, and Container Apps exposes no mount options to work
+//             around it.
+//
+//             So the database sits on the container's own disk, which is a
+//             real filesystem, and `dbsync` mirrors it to the share: a
+//             consistent snapshot on a timer, after every post, and on
+//             shutdown. The filings themselves never depend on it - openpyxl
+//             writes the workbooks straight to the share - so what the mirror
+//             protects is the accounts, the queue and the audit trail, and
+//             the exposure is the minutes since the last snapshot.
 //
 // Azure Files bills for what is stored either way. A few hundred MB is a few
 // cents a month, and a free account's first 12 months include more than that.
@@ -267,10 +275,26 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             : [ { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-key' } ],
           usePostgres
             ? [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
-            // Required, not optional, when the database is a file on the
-            // share: WAL does not work over SMB, and the failure is a
-            // database that reads as corrupt rather than an error.
-            : [ { name: 'GST_SQLITE_JOURNAL', value: 'DELETE' } ])
+            : [
+                // SQLite cannot live on the share. Azure Files does not honour
+                // the byte-range locks it takes, so even creating the schema on
+                // an empty file fails with "database is locked" - verified here
+                // with a single replica and a clean share, so it is neither
+                // lock contention nor a damaged file. Container Apps exposes no
+                // mount options, so nobrl is not available.
+                //
+                // The database therefore lives on the container's own disk and
+                // is mirrored to the share: a consistent snapshot on a timer,
+                // after every post, and on shutdown. The filings themselves are
+                // never at risk - openpyxl writes the workbooks straight to the
+                // share - so what the mirror protects is the accounts, the
+                // queue and the audit trail.
+                { name: 'GST_SQLITE_PATH', value: '/var/gstdb/store.db' }
+                { name: 'GST_DB_MIRROR', value: '/data/store.db' }
+                { name: 'GST_DB_MIRROR_INTERVAL', value: '120' }
+                // WAL is fine now the file is on a real filesystem.
+                { name: 'GST_SQLITE_JOURNAL', value: 'WAL' }
+              ])
           volumeMounts: [
             { volumeName: 'data', mountPath: '/data' }
           ]

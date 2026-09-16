@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
-from . import backup, history, runtime, store, uploads, workbook
+from . import backup, dbsync, history, runtime, store, uploads, workbook
 from . import period as periods
 from .config import (
     ARCHIVE_DIR,
@@ -620,7 +620,7 @@ def confirm(doc_id: str, *, override: bool = False, actor: dict | None = None) -
     # already assembled if a GST officer asks.
     archived = _archive(Path(record["stored_path"]), period, sheet, row, record["filename"])
 
-    return store.update(doc_id, {
+    posted = store.update(doc_id, {
         "status": DocStatus.POSTED.value,
         "stage": Stage.POSTED,
         "issues": result.as_dicts(),
@@ -637,6 +637,14 @@ def confirm(doc_id: str, *, override: bool = False, actor: dict | None = None) -
         "posted_by": (actor or {}).get("email"),
         "posted_by_name": (actor or {}).get("name"),
     }, event="posted_with_override" if (override and not result.ok) else "posted", actor=actor)
+
+    # Where the database is mirrored rather than durable in itself, this is the
+    # moment worth not losing: the register row is already on the share, and
+    # without this the record of who posted it, and when, lives only on a disk
+    # that disappears with the container. A no-op everywhere else.
+    dbsync.push("after posting")
+
+    return posted
 
 
 def unpost(doc_id: str, actor: dict | None = None) -> dict:

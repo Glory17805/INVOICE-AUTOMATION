@@ -43,11 +43,18 @@ COPY templates ./templates
 ENV GST_DATA_DIR=/data
 RUN mkdir -p /data
 
+# Somewhere on the container's OWN disk for the database to live when the data
+# directory is an Azure Files mount. Azure Files does not honour the
+# byte-range locks SQLite takes, so a database opened there fails to create
+# even an empty schema; this is a real filesystem, and dbsync mirrors the file
+# back to the share. Unused when the data directory is already local.
+RUN mkdir -p /var/gstdb
+
 # Runs as a non-root user, which also means /data must be writable by it. The
 # uid is fixed rather than left to the base image so the Azure Files mount can
 # be given the same one.
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gst \
- && chown -R gst:gst /app /data
+ && chown -R gst:gst /app /data /var/gstdb
 USER gst
 
 # App Service tells the container which port to listen on. Defaulting to 8000

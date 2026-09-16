@@ -34,6 +34,7 @@ from . import (
     appsettings,
     auth,
     db,
+    dbsync,
     history,
     pipeline,
     runtime,
@@ -74,14 +75,23 @@ async def lifespan(_app: FastAPI):
     # would overwrite each other's posted rows with no error anywhere.
     singleton.acquire(lock_path())
 
+    # Before anything opens the database: where the database is mirrored, the
+    # local copy is whatever the last container left behind - which on a
+    # scale-to-zero deployment is nothing at all.
+    dbsync.pull()
+
     workbook.ensure_working_copy(workbook.master_period())
     accounts.purge_expired()
     accounts.prune_activity()
     _recover_stranded_documents()
+    dbsync.start()
     _announce()
     try:
         yield
     finally:
+        # Ordered: take the final snapshot while the database is still ours,
+        # then give up the directory.
+        dbsync.stop()
         singleton.release()
 
 

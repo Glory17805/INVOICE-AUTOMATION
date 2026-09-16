@@ -245,7 +245,18 @@ def path() -> Path:
 
     Deriving it from STORE_PATH keeps a single knob: tests point STORE_PATH at a
     temporary directory and get an isolated database for free.
+
+    GST_SQLITE_PATH overrides it outright, for the one deployment shape that
+    needs the database somewhere other than the data directory: Azure Files
+    cannot host a SQLite database at all - the mount does not honour the
+    byte-range locks SQLite takes, so even creating the schema on an empty file
+    fails with "database is locked" - while it hosts the workbooks and PDFs
+    perfectly well. There the database lives on the container's own disk and is
+    mirrored back to the share by `dbsync`.
     """
+    override = os.environ.get("GST_SQLITE_PATH", "").strip()
+    if override:
+        return Path(override)
     return Path(STORE_PATH).with_suffix(".db")
 
 
