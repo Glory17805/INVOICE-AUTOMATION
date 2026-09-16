@@ -16,12 +16,20 @@ from app import accounts, db, dbsync, store
 
 @pytest.fixture
 def mirrored(tmp_path, monkeypatch):
-    """A local database with a durable mirror beside it, as the deployment has."""
+    """A local database with a durable mirror beside it, as the deployment has.
+
+    SQLite is pinned rather than inherited. Mirroring exists only for the
+    SQLite deployment - a managed PostgreSQL needs none of it - so under the
+    Postgres test run these would otherwise write rows to Postgres while
+    dbsync looked for a SQLite file that was never created, and fail in a way
+    that says nothing about either engine.
+    """
     local = tmp_path / "local" / "store.db"
     remote = tmp_path / "durable" / "store.db"
     local.parent.mkdir(parents=True, exist_ok=True)
     remote.parent.mkdir(parents=True, exist_ok=True)
 
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("GST_SQLITE_PATH", str(local))
     monkeypatch.setenv("GST_DB_MIRROR", str(remote))
     db.forget()
