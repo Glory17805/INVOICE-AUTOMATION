@@ -1,0 +1,606 @@
+<title>Supabase for Ira Invoice Automation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:    #f5f7f5;
+  --surface:   #ffffff;
+  --surface-2: #eaefec;
+  --line:      #d7ded9;
+  --line-firm: #b4bfb8;
+  --ink:       #121a16;
+  --ink-2:     #47554d;
+  --ink-3:     #78857d;
+
+  /* Three verdicts, three colours. The colour is the recommendation. */
+  --go:        #0f7a5a;
+  --go-soft:   #dcefe7;
+  --partly:    #9a6a10;
+  --partly-soft:#f6ecd9;
+  --wait:      #a1382a;
+  --wait-soft: #f7e5e1;
+
+  --display: "Archivo", "Helvetica Neue", sans-serif;
+  --body:    "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:    #0d120f;
+    --surface:   #141b17;
+    --surface-2: #1b241e;
+    --line:      #29332c;
+    --line-firm: #3c483f;
+    --ink:       #e6ece8;
+    --ink-2:     #a7b3ab;
+    --ink-3:     #78857d;
+    --go:        #4cc79a;
+    --go-soft:   #0f2b21;
+    --partly:    #d8a74f;
+    --partly-soft:#31260f;
+    --wait:      #e29081;
+    --wait-soft: #331c18;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:    #0d120f;
+  --surface:   #141b17;
+  --surface-2: #1b241e;
+  --line:      #29332c;
+  --line-firm: #3c483f;
+  --ink:       #e6ece8;
+  --ink-2:     #a7b3ab;
+  --ink-3:     #78857d;
+  --go:        #4cc79a;
+  --go-soft:   #0f2b21;
+  --partly:    #d8a74f;
+  --partly-soft:#31260f;
+  --wait:      #e29081;
+  --wait-soft: #331c18;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--body); font-size: 16.5px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 64rem; margin: 0 auto; padding-block: 0 5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
+
+header.top { padding-block: 3.5rem 2rem; border-bottom: 2px solid var(--ink); }
+.kicker {
+  font-family: var(--mono); font-size: .73rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--go); margin-bottom: .9rem;
+}
+h1 {
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(2.3rem, 5.5vw, 3.4rem); line-height: 1.03;
+  letter-spacing: -.03em; margin: 0 0 1rem; text-wrap: balance;
+}
+.deck { font-size: clamp(1.05rem, 2vw, 1.2rem); line-height: 1.55; color: var(--ink-2); max-width: 50ch; margin: 0; }
+
+/* verdict cards */
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; margin-top: 2.4rem; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--line-firm); border-radius: 3px; padding: 1.1rem 1.2rem 1.2rem; }
+.verdict.go     { border-top-color: var(--go); }
+.verdict.partly { border-top-color: var(--partly); }
+.verdict.wait   { border-top-color: var(--wait); }
+.verdict .what { font-family: var(--display); font-size: 1.15rem; font-weight: 600; letter-spacing: -.015em; }
+.verdict .call {
+  font-family: var(--mono); font-size: .7rem; letter-spacing: .07em; text-transform: uppercase;
+  margin-top: .35rem; display: inline-block; padding: .16rem .45rem; border-radius: 2px;
+}
+.verdict.go .call     { background: var(--go-soft);     color: var(--go); }
+.verdict.partly .call { background: var(--partly-soft); color: var(--partly); }
+.verdict.wait .call   { background: var(--wait-soft);   color: var(--wait); }
+.verdict p { margin: .7rem 0 0; font-size: .89rem; color: var(--ink-2); max-width: none; }
+.verdict .effort { margin-top: .7rem; font-family: var(--mono); font-size: .74rem; color: var(--ink-3); }
+
+section { margin-top: 4rem; }
+h2 {
+  font-family: var(--display); font-weight: 700; font-size: 1.75rem;
+  letter-spacing: -.022em; margin: 0 0 .35rem; text-wrap: balance;
+}
+h2 .num {
+  font-family: var(--mono); font-size: .85rem; font-weight: 400;
+  color: var(--go); letter-spacing: .04em; display: block; margin-bottom: .3rem;
+}
+h3 { font-size: 1rem; font-weight: 600; margin: 2.1rem 0 .5rem; }
+.sub { color: var(--ink-2); max-width: 62ch; margin: 0 0 1.4rem; }
+p { max-width: 64ch; }
+p + p { margin-top: .85rem; }
+
+pre {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+  padding: .9rem 1.05rem; margin: 1rem 0 0; overflow-x: auto;
+  font-family: var(--mono); font-size: .81rem; line-height: 1.7; color: var(--ink);
+}
+pre .c { color: var(--ink-3); }
+pre .k { color: var(--go); }
+code:not(pre code) {
+  font-family: var(--mono); font-size: .85em; background: var(--surface-2);
+  border: 1px solid var(--line); padding: .07em .33em; border-radius: 3px;
+}
+
+/* steps */
+.steps { counter-reset: s; margin-top: 1.2rem; }
+.step { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0 1rem; padding: 1.3rem 0; border-bottom: 1px solid var(--line); }
+.step:first-child { border-top: 1px solid var(--line-firm); }
+.step::before {
+  counter-increment: s; content: counter(s);
+  font-family: var(--mono); font-size: .8rem; color: var(--go);
+  padding-top: .22rem; font-variant-numeric: tabular-nums;
+}
+.step .body { min-width: 0; }
+.step h4 { margin: 0; font-size: 1rem; font-weight: 600; }
+.step p { margin: .4rem 0 0; font-size: .92rem; color: var(--ink-2); }
+
+.note {
+  margin-top: 1.3rem; padding: 1rem 1.15rem; background: var(--surface);
+  border: 1px solid var(--line); border-left: 3px solid var(--partly); border-radius: 0 3px 3px 0;
+}
+.note.stop { border-left-color: var(--wait); }
+.note.good { border-left-color: var(--go); }
+.note h4 { margin: 0 0 .3rem; font-size: .89rem; font-weight: 700; }
+.note p { margin: 0; font-size: .89rem; color: var(--ink-2); max-width: 66ch; }
+.note p + p { margin-top: .5rem; }
+
+.scroll { overflow-x: auto; margin-top: 1.2rem; }
+table { width: 100%; border-collapse: collapse; font-size: .87rem; min-width: 30rem; }
+th {
+  text-align: left; font-family: var(--mono); font-size: .67rem; font-weight: 500;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+  padding: 0 1rem .5rem 0; border-bottom: 1px solid var(--line-firm); white-space: nowrap;
+}
+td { padding: .58rem 1rem .58rem 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+td:first-child { color: var(--ink); font-weight: 500; }
+td.mono { font-family: var(--mono); font-size: .8rem; }
+
+figure { margin: 1.5rem 0 0; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 1.4rem 1.3rem 1rem; overflow-x: auto; }
+figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
+figcaption { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid var(--line); font-size: .84rem; color: var(--ink-2); line-height: 1.55; }
+figcaption b { color: var(--ink); font-weight: 600; }
+
+footer { margin-top: 4.5rem; padding-top: 1.3rem; border-top: 1px solid var(--line); font-size: .82rem; color: var(--ink-3); }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">Migration guide &middot; September 2026</div>
+  <h1>Supabase for Ira Invoice Automation</h1>
+  <p class="deck">Three things you asked about, with three different answers. One is almost free, one is real work worth doing, and one I would not do yet.</p>
+
+  <div class="verdicts">
+    <div class="verdict go">
+      <div class="what">Database</div>
+      <div class="call">Do it</div>
+      <p>Supabase <em>is</em> PostgreSQL, and the code already speaks PostgreSQL. This is one environment variable and a migration script that already exists.</p>
+      <div class="effort">~30 minutes &middot; deletes code</div>
+    </div>
+    <div class="verdict partly">
+      <div class="what">Document storage</div>
+      <div class="call">Partly</div>
+      <p>Good for the uploaded PDFs and the archive. <b>Not</b> for the Excel workbook &mdash; openpyxl needs a real filesystem, and object storage is not one.</p>
+      <div class="effort">~half a day &middot; 7 call sites</div>
+    </div>
+    <div class="verdict wait">
+      <div class="what">Authentication</div>
+      <div class="call">Think twice</div>
+      <p>Replaces about 35 working, tested functions across 19 routes plus the frontend. What you gain is password-reset email and OAuth.</p>
+      <div class="effort">2&ndash;3 days &middot; rewrites auth</div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <h2>Before anything: the free-tier catch</h2>
+  <p class="sub">This one decides whether Supabase suits this project at all, so it comes first.</p>
+
+  <div class="note stop">
+    <h4>Free projects pause after 7 days without activity</h4>
+    <p>A paused project stops answering. You restore it by hand from the dashboard, and it takes a minute or two to come back.</p>
+    <p>That matters here more than it would for most apps: <b>GST returns are monthly</b>. A tool opened around the filing date and left alone in between will be paused almost every time you go to use it. The database being asleep is exactly when you need it.</p>
+  </div>
+
+  <p>There are three honest ways around it, and you should pick one before migrating:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Option</th><th>Cost</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td>Accept the pause</td><td>&#8377;0</td><td>Unpause from the dashboard when you sit down to file. One click, a minute's wait, once a month.</td></tr>
+        <tr><td>Keep it warm</td><td>&#8377;0</td><td>A scheduled query every few days. A GitHub Actions cron doing one <code>SELECT 1</code> is enough, and Actions is free for public repos.</td></tr>
+        <tr><td>Supabase Pro</td><td>~$25/mo</td><td>No pausing, daily backups, more storage. Far more than this project needs.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The keep-warm cron is what I would do &mdash; it costs nothing and removes the problem entirely. There's a ready-made workflow at the end of this guide.</p>
+
+  <h3>What the free tier gives you</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Resource</th><th class="mono">Free limit</th><th>What this project uses</th></tr></thead>
+      <tbody>
+        <tr><td>Database</td><td class="mono">500 MB</td><td>84 KB today. Thousands of invoices before it matters.</td></tr>
+        <tr><td>File storage</td><td class="mono">1 GB</td><td>~25 KB per invoice PDF, so roughly 40,000 of them.</td></tr>
+        <tr><td>Monthly active users</td><td class="mono">50,000</td><td>One or two.</td></tr>
+        <tr><td>Region</td><td class="mono">ap-south-1</td><td>Mumbai. Your tax records stay in India.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">Part one</span>Database</h2>
+  <p class="sub">The easiest win in this whole guide, because the work was already done.</p>
+
+  <p>When the app moved to Azure it had to leave SQLite, so <code>db.py</code> was rewritten to speak both engines from one schema. It picks PostgreSQL whenever <code>DATABASE_URL</code> is set. Supabase hands you exactly that string, so pointing the app at Supabase is configuration, not code.</p>
+
+  <figure>
+    <svg viewBox="0 0 800 210" role="img" aria-label="Today the app keeps SQLite on the container disk and mirrors it to Azure Files; with Supabase it connects straight to a managed Postgres and the mirror disappears.">
+      <defs>
+        <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+        <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--go)"/>
+        </marker>
+      </defs>
+      <g font-family="Source Sans 3, sans-serif">
+        <text x="8" y="20" font-size="10.5" font-family="JetBrains Mono, monospace" fill="var(--ink-3)">TODAY</text>
+        <rect x="8" y="30" width="150" height="46" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="83" y="58" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">API container</text>
+        <rect x="216" y="30" width="160" height="46" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="296" y="51" text-anchor="middle" font-size="11.5" fill="var(--ink)">SQLite, local disk</text>
+        <text x="296" y="67" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">lost on restart</text>
+        <rect x="434" y="30" width="160" height="46" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="514" y="51" text-anchor="middle" font-size="11.5" fill="var(--ink)">Azure Files mirror</text>
+        <text x="514" y="67" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">every 120s</text>
+        <path d="M158 53 L210 53" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#m1)"/>
+        <path d="M376 53 L428 53" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#m1)" stroke-dasharray="4 3"/>
+        <text x="650" y="50" font-size="10.5" fill="var(--ink-3)">two stores, one</text>
+        <text x="650" y="64" font-size="10.5" fill="var(--ink-3)">copying the other</text>
+
+        <line x1="8" y1="104" x2="792" y2="104" stroke="var(--line)" stroke-width="1"/>
+
+        <text x="8" y="132" font-size="10.5" font-family="JetBrains Mono, monospace" fill="var(--go)">WITH SUPABASE</text>
+        <rect x="8" y="142" width="150" height="46" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="83" y="170" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">API container</text>
+        <rect x="216" y="142" width="200" height="46" rx="3" fill="var(--go-soft)" stroke="var(--go)" stroke-width="1.4"/>
+        <text x="316" y="163" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Supabase PostgreSQL</text>
+        <text x="316" y="179" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">managed, backed up</text>
+        <path d="M158 165 L210 165" stroke="var(--go)" stroke-width="1.4" fill="none" marker-end="url(#m2)"/>
+        <text x="184" y="157" text-anchor="middle" font-size="9" fill="var(--go)">sslmode=require</text>
+        <text x="450" y="162" font-size="10.5" fill="var(--go)" font-weight="600">dbsync deleted entirely</text>
+        <text x="450" y="177" font-size="10" fill="var(--ink-3)">~170 lines, and the mirror window with it</text>
+      </g>
+    </svg>
+    <figcaption><b>This migration removes code rather than adding it.</b> The local-disk-plus-mirror arrangement exists only because Azure Files cannot host SQLite. A managed PostgreSQL makes the whole workaround unnecessary &mdash; along with the two-minute window where an ungraceful shutdown could lose queue activity.</figcaption>
+  </figure>
+
+  <div class="steps">
+    <div class="step"><div class="body">
+      <h4>Create the project</h4>
+      <p>At <code>supabase.com</code>, new project, region <b>South Asia (Mumbai)</b>. Save the database password it generates &mdash; it is shown once.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Take the session-pooler connection string</h4>
+      <p>Project Settings &rarr; Database &rarr; Connection string. Pick <b>Session pooler</b>, not Transaction pooler and not Direct.</p>
+      <pre><span class="c"># Session pooler - port 5432, IPv4, keeps prepared statements working</span>
+postgresql://postgres.<span class="k">[ref]</span>:<span class="k">[password]</span>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require</pre>
+      <p>This choice is not cosmetic, and it is the thing most likely to waste your afternoon &mdash; see the note below.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Move your existing data</h4>
+      <p>The tool for this is already in the repo. It reads the SQLite file and writes through the application's own schema, so the destination is built exactly as the app expects.</p>
+      <pre>cd backend
+$env:DATABASE_URL = <span class="k">"&lt;the session pooler string&gt;"</span>
+python -m tools.migrate_to_postgres --sqlite data/store.db</pre>
+      <p>It refuses to run twice rather than doubling your audit trail. Pass <code>--replace</code> if you genuinely need to re-run it.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Point the deployment at it</h4>
+      <p>Set it as a Container Apps secret, so the password is not sitting in plain configuration.</p>
+      <pre>az containerapp secret set -g rg_internship -n iragst-api \
+    --secrets database-url=<span class="k">"&lt;the string&gt;"</span>
+
+az containerapp update -g rg_internship -n iragst-api \
+    --set-env-vars DATABASE_URL=secretref:database-url \
+    --remove-env-vars GST_SQLITE_PATH GST_DB_MIRROR GST_DB_MIRROR_INTERVAL GST_SQLITE_JOURNAL</pre>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Check it took</h4>
+      <p><code>/api/ready</code> reports which database it is actually talking to, with the password stripped. It should now name the Supabase host instead of a file path.</p>
+      <pre>curl https://iragst-api.&lt;env&gt;.azurecontainerapps.io/api/ready
+
+<span class="c">"database": { "ok": true,
+  "detail": "postgresql://postgres.[ref]@aws-0-ap-south-1.pooler.supabase.com:5432/postgres" }</span></pre>
+    </div></div>
+  </div>
+
+  <div class="note stop">
+    <h4>Use the session pooler, not the transaction pooler</h4>
+    <p>Supabase offers three connection strings and two of them will bite you here. The <b>transaction pooler</b> (port 6543) runs pgbouncer in transaction mode, which does not support the prepared statements psycopg uses by default &mdash; you get intermittent <code>prepared statement &quot;_pg3_0&quot; already exists</code> errors that look like application bugs. The <b>direct connection</b> is IPv6-only on the free tier, and Container Apps will simply fail to reach it.</p>
+    <p>The session pooler is IPv4 and holds one connection per session, which is exactly what a single-instance app wants.</p>
+  </div>
+
+  <div class="note good">
+    <h4>What you can delete afterwards</h4>
+    <p>Once the deployment is on Supabase and you have confirmed a post works, <code>app/dbsync.py</code>, its seven tests and the three call sites in <code>main.py</code> and <code>pipeline.py</code> all become dead weight. That is around 170 lines of workaround that existed for one reason, which no longer applies.</p>
+    <p>Keep the SQLite path itself &mdash; it is what the test suite runs on, and what makes a local checkout work with no services at all.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">Part two</span>Document storage</h2>
+  <p class="sub">Right for the PDFs. Wrong for the workbook, and the difference matters.</p>
+
+  <p>The app touches durable files in three roles, and they are not alike:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>What</th><th class="mono">Where now</th><th>Access pattern</th><th>Supabase Storage?</th></tr></thead>
+      <tbody>
+        <tr><td>Uploaded PDFs</td><td class="mono">incoming/</td><td>Write once, read a few times, then move.</td><td style="color: var(--go)"><b>Yes &mdash; ideal</b></td></tr>
+        <tr><td>Archived sources</td><td class="mono">archive/</td><td>Write once, read rarely, keep forever.</td><td style="color: var(--go)"><b>Yes &mdash; ideal</b></td></tr>
+        <tr><td>Period workbooks</td><td class="mono">workbook/</td><td>Read, modify and rewrite on every single post.</td><td style="color: var(--wait)"><b>No</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note stop">
+    <h4>Why the workbook must stay on a filesystem</h4>
+    <p>openpyxl works on paths, not streams: <code>load_workbook(path)</code> then <code>wb.save(path)</code>. Object storage has no paths, so every post would become download &rarr; open &rarr; modify &rarr; save &rarr; upload, with the whole register crossing the network twice.</p>
+    <p>That is slow, and worse, it reintroduces a race the current design closed: between the download and the upload, the file on the server is stale. The app is single-instance so the window is narrow, but "narrow" is not the standard you want for the file holding filed returns. Leave the workbook on the Azure Files share, which handles whole-file writes perfectly well.</p>
+  </div>
+
+  <h3>The seven places that change</h3>
+  <p>Moving the PDFs is a contained job. Every filesystem touch for documents lives in two files:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th class="mono">Location</th><th>What it does now</th><th>Becomes</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">pipeline.py:153</td><td>Writes the staged upload</td><td>Upload to <code>incoming/</code></td></tr>
+        <tr><td class="mono">pipeline.py:164</td><td>Stores a single-invoice file</td><td>Upload under the document id</td></tr>
+        <tr><td class="mono">pipeline.py:184</td><td>Stores each split segment</td><td>Upload per segment</td></tr>
+        <tr><td class="mono">pipeline.py:411</td><td>Reads the file to extract from</td><td>Download to a temp file</td></tr>
+        <tr><td class="mono">pipeline.py:621</td><td>Archives the source after posting</td><td>Server-side move</td></tr>
+        <tr><td class="mono">pipeline.py:680</td><td>Builds the archive folder path</td><td>Object key prefix</td></tr>
+        <tr><td class="mono">main.py:937</td><td>Serves the PDF to the review pane</td><td>Signed URL, or stream through</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="steps">
+    <div class="step"><div class="body">
+      <h4>Create a private bucket</h4>
+      <p>Storage &rarr; New bucket, named <code>documents</code>, <b>not public</b>. These are invoices with real GSTINs and amounts; a public bucket is a directory listing of your client's trade.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Add the client</h4>
+      <pre><span class="c"># backend/requirements.txt</span>
+supabase&gt;=2.15,&lt;3.0</pre>
+      <p>Use the <b>service-role</b> key from Project Settings &rarr; API, not the anon key. The backend is trusted; the browser never sees this key.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Write one module, change nothing else yet</h4>
+      <p>Put the storage behind the same shape the code already uses, so the call sites change as little as possible.</p>
+      <pre><span class="c"># backend/app/docstore.py</span>
+<span class="k">from</span> pathlib <span class="k">import</span> Path
+<span class="k">import</span> os, tempfile
+<span class="k">from</span> supabase <span class="k">import</span> create_client
+
+BUCKET = "documents"
+
+<span class="k">def</span> _client():
+    <span class="k">return</span> create_client(os.environ["SUPABASE_URL"],
+                         os.environ["SUPABASE_SERVICE_KEY"])
+
+<span class="k">def</span> put(key: str, data: bytes) -&gt; str:
+    """Store bytes and return the key they can be fetched by."""
+    _client().storage.from_(BUCKET).upload(
+        key, data, {"content-type": "application/pdf", "upsert": "true"})
+    <span class="k">return</span> key
+
+<span class="k">def</span> fetch_to_temp(key: str) -&gt; Path:
+    """Download to a real file, because pypdf and OCR want paths."""
+    data = _client().storage.from_(BUCKET).download(key)
+    handle = tempfile.NamedTemporaryFile(suffix=Path(key).suffix, delete=False)
+    handle.write(data); handle.close()
+    <span class="k">return</span> Path(handle.name)
+
+<span class="k">def</span> move(old: str, new: str) -&gt; str:
+    """Archive without pulling the bytes down and back up."""
+    _client().storage.from_(BUCKET).move(old, new)
+    <span class="k">return</span> new
+
+<span class="k">def</span> signed_url(key: str, seconds: int = 300) -&gt; str:
+    """A link the review pane can load, that expires."""
+    <span class="k">return</span> _client().storage.from_(BUCKET).create_signed_url(
+        key, seconds)["signedURL"]</pre>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Keep <code>stored_path</code> as the seam</h4>
+      <p>Documents already carry a <code>stored_path</code> field. Let it hold an object key instead of a filesystem path and most of the code stops caring which it is. The three places that open the file are the ones to change &mdash; wrap each in <code>fetch_to_temp</code> and delete the temp afterwards.</p>
+      <p>Migrating old rows is a one-off: upload each existing file under the same name, then rewrite the field.</p>
+    </div></div>
+
+    <div class="step"><div class="body">
+      <h4>Serve previews by signed URL</h4>
+      <p>The review pane currently streams the PDF through the API. A signed URL lets the browser fetch it from Supabase directly, which takes the load off a container that scales to zero. Remember the frontend's <code>connect-src</code> must then allow the Supabase host, or the browser blocks it silently.</p>
+    </div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">Part three</span>Authentication</h2>
+  <p class="sub">The one I would leave alone, and the reasoning is about cost against benefit rather than about Supabase.</p>
+
+  <p>Supabase Auth is good. The question is not whether it works &mdash; it is what replacing a working system costs here, and what you get back.</p>
+
+  <h3>What is already built</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Piece</th><th class="mono">Size</th><th>Already handles</th></tr></thead>
+      <tbody>
+        <tr><td><code>accounts.py</code></td><td class="mono">24 functions</td><td>scrypt hashing, sessions, roles, password reset, session listing and revocation</td></tr>
+        <tr><td><code>auth.py</code></td><td class="mono">11 functions</td><td>bearer tokens, the admin/user dependencies, database-backed login throttling</td></tr>
+        <tr><td>Routes</td><td class="mono">19</td><td>signup, login, logout, reset, password change, user administration</td></tr>
+        <tr><td>Protected handlers</td><td class="mono">35</td><td>every one declares its own access requirement</td></tr>
+        <tr><td>Audit trail</td><td class="mono">woven through</td><td>every action recorded against the account that took it</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What the swap would cost</h3>
+  <p>All 35 protected handlers keep working only if <code>require_user</code> and <code>require_admin</code> return the same shape, so the honest version of this migration is: verify a Supabase JWT instead of looking up a session row, and keep everything downstream identical.</p>
+
+  <pre><span class="c"># the smallest possible version of the change, in auth.py</span>
+<span class="k">import</span> jwt  <span class="c"># PyJWT</span>
+
+<span class="k">def</span> caller(request: Request) -&gt; dict | None:
+    token = bearer_token(request)
+    <span class="k">if not</span> token:
+        <span class="k">return</span> None
+    <span class="k">try</span>:
+        claims = jwt.decode(token, os.environ["SUPABASE_JWT_SECRET"],
+                            algorithms=["HS256"], audience="authenticated")
+    <span class="k">except</span> jwt.PyJWTError:
+        <span class="k">return</span> None
+    <span class="c"># Roles are not in Supabase Auth - they live in a profiles table you own,</span>
+    <span class="c"># or in app_metadata that only the service key can write.</span>
+    <span class="k">return</span> {"id": claims["sub"], "email": claims.get("email"),
+            "role": claims.get("app_metadata", {}).get("role", "user")}</pre>
+
+  <p>That part is genuinely small. The rest is not:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Also needed</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Frontend rewrite of the sign-in flow</td><td>supabase-js, token refresh, and a session that can expire mid-edit rather than on a fixed clock.</td></tr>
+        <tr><td>A <code>profiles</code> table</td><td>Supabase Auth has no notion of your admin/user roles, or of the approval state.</td></tr>
+        <tr><td>Retiring 19 routes</td><td>Signup, login, reset and user administration all move to Supabase, and the Admin screen has to talk to it instead.</td></tr>
+        <tr><td>Reworking the audit trail</td><td>It records a local user id. Those ids change, and the history must still resolve to a person.</td></tr>
+        <tr><td>Migrating existing accounts</td><td>scrypt hashes cannot be imported. Everyone resets their password once.</td></tr>
+        <tr><td>Re-testing</td><td>A large share of the 365 tests touch accounts or sessions.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>What you would gain</h3>
+  <p>Real things, worth naming honestly: password-reset emails that actually send (today the app generates a reset link and has no mail sender), sign-in with Google, multi-factor authentication, and one less thing you maintain.</p>
+
+  <p>Weigh that against the system having <b>two users</b>, one of whom is you. Password-reset email is the only item on that list you are likely to miss, and it is a much smaller job to send mail from the existing reset flow than to replace the flow.</p>
+
+  <div class="note">
+    <h4>If you do want it, do it last</h4>
+    <p>Database and storage are independent of this and can go first without committing you to anything. Auth is the one that touches the frontend, the audit trail and most of the test suite at once &mdash; so it wants to be a deliberate piece of work, not a step in a migration that has already moved two other things the same week.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Where that leaves the architecture</h2>
+  <p class="sub">Doing parts one and two, and leaving part three.</p>
+
+  <figure>
+    <svg viewBox="0 0 800 250" role="img" aria-label="After migrating: the browser talks to the frontend and API containers on Azure; the API uses Supabase Postgres for data and Supabase Storage for PDFs, while the Excel workbooks stay on the Azure file share.">
+      <defs>
+        <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+        <marker id="fg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--go)"/>
+        </marker>
+      </defs>
+      <g font-family="Source Sans 3, sans-serif">
+        <rect x="300" y="8" width="180" height="36" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="390" y="31" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Browser</text>
+        <path d="M390 44 L390 68" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#fa)"/>
+
+        <rect x="24" y="68" width="752" height="74" rx="4" fill="none" stroke="var(--line-firm)" stroke-width="1.2" stroke-dasharray="4 4"/>
+        <text x="36" y="85" font-size="9" font-family="JetBrains Mono, monospace" letter-spacing="1" fill="var(--ink-3)">AZURE CONTAINER APPS &mdash; unchanged</text>
+
+        <rect x="130" y="92" width="200" height="40" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="230" y="117" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">frontend</text>
+        <rect x="450" y="92" width="200" height="40" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="550" y="117" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">API + auth (kept)</text>
+        <path d="M330 112 L444 112" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#fa)"/>
+
+        <rect x="50" y="182" width="190" height="52" rx="3" fill="var(--go-soft)" stroke="var(--go)" stroke-width="1.4"/>
+        <text x="145" y="203" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Supabase Postgres</text>
+        <text x="145" y="221" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">queue, accounts, audit</text>
+
+        <rect x="300" y="182" width="190" height="52" rx="3" fill="var(--go-soft)" stroke="var(--go)" stroke-width="1.4"/>
+        <text x="395" y="203" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Supabase Storage</text>
+        <text x="395" y="221" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">PDFs, archive</text>
+
+        <rect x="550" y="182" width="200" height="52" rx="3" fill="var(--surface)" stroke="var(--line-firm)" stroke-width="1.3"/>
+        <text x="650" y="203" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Azure Files</text>
+        <text x="650" y="221" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">Excel workbooks only</text>
+
+        <path d="M520 142 L200 142 L200 176" stroke="var(--go)" stroke-width="1.3" fill="none" marker-end="url(#fg)"/>
+        <path d="M545 142 L410 142 L410 176" stroke="var(--go)" stroke-width="1.3" fill="none" marker-end="url(#fg)"/>
+        <path d="M580 142 L640 142 L640 176" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#fa)"/>
+        <text x="700" y="160" font-size="9.5" fill="var(--ink-3)">openpyxl needs a path</text>
+      </g>
+    </svg>
+    <figcaption><b>Three stores, each doing what it is actually good at.</b> Supabase takes the structured data and the write-once documents. The file share keeps only the workbooks, because that is the one thing needing a real filesystem. The containers and the auth system do not change at all.</figcaption>
+  </figure>
+
+  <h3>The keep-warm workflow</h3>
+  <p>This is the piece that makes the free tier usable for a monthly task. It runs every three days and costs nothing.</p>
+
+  <pre><span class="c"># .github/workflows/keep-supabase-awake.yml</span>
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: <span class="k">"0 6 */3 * *"</span>   <span class="c"># every three days, well inside the 7-day window</span>
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: <span class="k">"3.12"</span> }
+      - run: python -m pip install <span class="k">"psycopg[binary]"</span>
+      - name: One query is enough
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          python -c <span class="k">"
+          import os, psycopg
+          with psycopg.connect(os.environ['DATABASE_URL']) as c:
+              print('awake:', c.execute('select now()').fetchone()[0])
+          "</span></pre>
+
+  <div class="note good">
+    <h4>Suggested order</h4>
+    <p>Database first &mdash; it is half an hour and deletes the dbsync workaround. Live with it for a filing cycle before touching anything else, because that is when a paused project or a pooler problem would show itself.</p>
+    <p>Storage second, once you trust the database. Auth only if password-reset email turns out to be something you actually want.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Ira Invoice Automation &mdash; a personal project. Line numbers refer to <code>Glory17805/INVOICE-AUTOMATION</code> at commit <code>5458271</code>.</p>
+</footer>
+
+</div>
