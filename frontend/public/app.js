@@ -287,21 +287,35 @@ async function loadInfo() {
      fall back to the offline reader. Naming the configured provider through
      that would tell someone their invoices were read by a model that never
      saw them. */
-  const PROVIDER_NAMES = { claude: "Claude", gemini: "Gemini", heuristic: "Offline" };
+  const PROVIDER_NAMES = {
+    claude: "Claude", gemini: "Gemini",
+    // Offline is a provider in its own right, not a fallback. Both spellings
+    // appear: "offline" is what is configured, "heuristic" is the reader that
+    // actually runs.
+    offline: "Offline", heuristic: "Offline",
+  };
   const provider = state.info.provider || state.info.reader;
   const readerName = PROVIDER_NAMES[provider] || provider || "Offline";
-  const configured = provider && provider !== "heuristic";
+
+  // Whether an external service is meant to be doing the reading. Offline is
+  // not one: it cannot be unreachable, so it can never be "degraded". Reading
+  // it as one produced the nonsense "offline could not be reached, so invoices
+  // are being read offline".
+  const usesService = Boolean(provider) && provider !== "heuristic" && provider !== "offline";
   const effective = state.info.reader_effective;
-  const degraded = configured && effective === "heuristic";
+  const degraded = usesService && effective === "heuristic";
 
   const dot = $("#reader-dot");
   const label = $("#reader-label");
 
-  if (!configured) {
-    dot.className = "dot warn";
+  if (!usesService) {
+    // Not a warning. Reading offline is a supported way to run this, and on
+    // the invoices it handles it reads every field - so the dot stays neutral
+    // and the tooltip says what it does rather than what it lacks.
+    dot.className = "dot";
     label.textContent = "Offline reader";
-    label.title = "No reader key configured. Text-layer PDFs are read in full; scans cannot "
-      + "be read. Add a key to backend/.env — no restart needed.";
+    label.title = "Invoices are read on this machine, with no external service. "
+      + "Scans need OCR installed; everything else is read from the document itself.";
   } else if (degraded) {
     dot.className = "dot warn";
     label.textContent = `${readerName} unavailable`;
@@ -1603,7 +1617,7 @@ function wire() {
   $("#btn-theme").addEventListener("click", () => {
     const order = ["light", "dark", "system"];
     const next = order[(order.indexOf(state.theme) + 1) % order.length];
-    setTheme(next);
+    applyTheme(next);
     toast(next === "system" ? "Following your system theme" : `${next} theme`);
   });
 

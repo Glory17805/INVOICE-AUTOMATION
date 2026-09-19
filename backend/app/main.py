@@ -279,7 +279,14 @@ def ready() -> JSONResponse:
     provider = extraction_provider()
     credentialed = has_credentials()
     last = runtime.last_read(provider, credentialed)
-    fell_back = bool(last and last.get("reader") == "heuristic")
+
+    # Reading offline is the configured behaviour when offline is the provider,
+    # so it is not a fall-back and must not be reported as one. Without this
+    # the health check told a correctly configured offline install that its
+    # "last read fell back (no reason recorded)" - which is both alarming and
+    # untrue, and there is no reason to record because nothing went wrong.
+    fell_back = (provider != "offline"
+                 and bool(last and last.get("reader") == "heuristic"))
 
     # Absent credentials is degraded on its own, without waiting for a read to
     # prove it. Keying this off fell_back alone reported a perfectly healthy

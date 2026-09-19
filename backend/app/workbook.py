@@ -16,7 +16,10 @@ Two things this module is careful about:
 
 from __future__ import annotations
 
+import logging
+import os
 import shutil
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -30,6 +33,8 @@ from openpyxl import load_workbook
 from . import period as periods
 from .config import IRA_INNOVATIONS, WORKBOOK_DIR, source_workbook
 from .models import DocumentType, GstTreatment, SupplyType, TaxPayableSummary
+
+log = logging.getLogger("gst.workbook")
 
 # Serialises workbook access. Excel files are a single mutable resource and the
 # API can be hit concurrently.
@@ -146,6 +151,25 @@ def master_period() -> str:
     return found
 
 
+def _ensure_writable(path: Path) -> None:
+    """Make sure this process can write the file it is about to depend on.
+
+    Belt to copyfile's braces, and it earns its place on a mounted file share,
+    where the mode a new file ends up with is decided by the mount rather than
+    by the umask - so "I created it" is not the same as "I can write it".
+
+    Failure is logged, not raised: on some filesystems chmod is not honoured,
+    and the write that follows either works or reports its own, better error.
+    Refusing to continue here would turn a maybe into a certainty.
+    """
+    try:
+        mode = path.stat().st_mode
+        if not mode & stat.S_IWUSR:
+            path.chmod(mode | stat.S_IWUSR)
+    except OSError:
+        log.warning("Could not make %s writable; a post may fail on it.", path, exc_info=True)
+
+
 def ensure_working_copy(period: str) -> Path:
     """Get this period's workbook, creating it from the master if needed.
 
@@ -159,6 +183,11 @@ def ensure_working_copy(period: str) -> Path:
 
     target = workbook_path(period)
     if target.exists():
+        # Also on the way past an existing file, not only when creating one:
+        # copies made before this was fixed are already read-only on disk, and
+        # they hold posted rows, so they are repaired in place rather than
+        # deleted and recreated.
+        _ensure_writable(target)
         return target
 
     src = source_workbook()
@@ -167,7 +196,16 @@ def ensure_working_copy(period: str) -> Path:
             f"Source workbook not found at {src}. Set GST_SOURCE_WORKBOOK in .env to its path."
         )
     WORKBOOK_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, target)
+
+    # copyfile, not copy2: this is the copy the application writes to on every
+    # post, and copy2 brings the source's permissions with it. The master is a
+    # template nobody should edit in place, so it is often read-only - and a
+    # read-only working copy fails at the moment of posting, reporting
+    # "Permission denied" against the period workbook rather than the master it
+    # inherited the mode from. copyfile takes the contents and lets the new file
+    # get ordinary default permissions.
+    shutil.copyfile(src, target)
+    _ensure_writable(target)
 
     if period != master_period():
         _reset_for_new_period(target, period)
@@ -261,7 +299,35 @@ def _open(period: str):
 
 
 def _save(wb, period: str) -> None:
-    wb.save(workbook_path(period))
+    """Write the workbook out by replacing it, not by opening it in place.
+
+    Two reasons, and either alone would justify it.
+
+    Crash safety: openpyxl truncates the target and then streams a zip into
+    it, so a process that dies mid-save leaves a register that is neither the
+    old file nor the new one. This writes a complete file beside it and moves
+    it into place, and a rename is atomic - the workbook is one version or the
+    other, never half of one.
+
+    Permissions: replacing a file needs write permission on the *directory*,
+    not on the file. On a mounted share the mode of an existing file is not
+    always something this process can change - it may not even own it - and
+    that is exactly how posting failed in Azure with "Permission denied"
+    against a period workbook sitting in a directory it could otherwise write
+    freely.
+    """
+    target = workbook_path(period)
+    staging = target.with_name(target.name + ".saving")
+    try:
+        wb.save(staging)
+        os.replace(staging, target)
+    finally:
+        # A failed save must not leave debris next to the register, where the
+        # next person to look would have to work out which file is real.
+        try:
+            staging.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def reset_working_copy(period: str | None = None) -> None:
