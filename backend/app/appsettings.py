@@ -20,14 +20,19 @@ from . import db
 DEFAULTS: dict[str, object] = {
     # Who may create an account from the sign-in page.
     #
-    #   approval - anyone may ask; an administrator lets them in   (default)
-    #   open     - anyone may create a working account immediately
-    #   closed   - no signup link; administrators add people
+    #   open   - anyone may create a working account immediately   (default)
+    #   closed - no signup link; administrators add people
     #
-    # "approval" is the default rather than "open" because this system holds a
-    # company's filed tax records. The link is there and it works; what it does
-    # not do is hand out access to those records to whoever finds the page.
-    "signup_mode": "approval",
+    # There used to be a third mode, "approval", where an account was created
+    # but could not sign in until an administrator let it in. It is gone: an
+    # account either works or was never created. Someone holding credentials
+    # that silently do nothing cannot tell that from a system that is broken.
+    #
+    # This system holds a company's filed tax records, so "open" is the right
+    # default only while it is reachable by people who should have access -
+    # a laptop, an office network. Exposed more widely than that, set it to
+    # "closed" and add people from the Admin screen.
+    "signup_mode": "open",
 
     # Invoice processing
     "currency": "INR",
@@ -48,7 +53,13 @@ DEFAULTS: dict[str, object] = {
 
 _CURRENCIES = {"INR", "USD", "EUR", "GBP", "AED", "SGD"}
 _DATE_FORMATS = {"dd-MMM-yyyy", "dd/MM/yyyy", "yyyy-MM-dd", "MM/dd/yyyy"}
-_SIGNUP_MODES = {"approval", "open", "closed"}
+_SIGNUP_MODES = {"open", "closed"}
+
+# A database written before the approval mode was removed may still hold it.
+# Read as "open" rather than rejected: a value the validator refuses would
+# leave the settings screen unable to load, and refusing to interpret an old
+# value is not a reason to lock an administrator out of changing it.
+_RETIRED_SIGNUP_MODES = {"approval": "open"}
 
 
 def _clean(key: str, value):
@@ -71,6 +82,7 @@ def _clean(key: str, value):
         return text
     if key == "signup_mode":
         text = str(value).strip().lower()
+        text = _RETIRED_SIGNUP_MODES.get(text, text)
         if text not in _SIGNUP_MODES:
             raise ValueError(f"Signup mode must be one of {', '.join(sorted(_SIGNUP_MODES))}.")
         return text
@@ -86,6 +98,12 @@ def all_settings() -> dict:
                     values[row["key"]] = json.loads(row["value"])
                 except json.JSONDecodeError:
                     pass
+    # Translated on the way out as well as on the way in, so a value stored
+    # before the mode was retired never reaches a caller that has never heard
+    # of it. Nothing is rewritten here: a read is not the place to write.
+    stored = values.get("signup_mode")
+    if stored in _RETIRED_SIGNUP_MODES:
+        values["signup_mode"] = _RETIRED_SIGNUP_MODES[stored]
     return values
 
 
@@ -116,8 +134,6 @@ def options() -> dict:
         "currency": sorted(_CURRENCIES),
         "date_format": sorted(_DATE_FORMATS),
         "signup_mode": [
-            {"value": "approval",
-             "label": "Anyone can ask; an administrator approves them"},
             {"value": "open",
              "label": "Anyone can create a working account immediately"},
             {"value": "closed",

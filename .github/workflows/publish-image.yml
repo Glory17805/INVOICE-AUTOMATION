@@ -1,12 +1,16 @@
-# Build the API image and publish it to ghcr.io.
+# Build both images and publish them to ghcr.io.
 #
 # Separate from deploy.yml, which pushes to an Azure Container Registry and
 # needs Azure credentials. This one needs no secrets at all: GITHUB_TOKEN is
 # minted per run and, with packages:write below, can push to this repository's
-# own package namespace. That makes the image free to build and free to store.
+# own package namespace. That makes the images free to build and free to store.
 #
-# Only the API is built. The frontend is static files, published to Azure
-# Static Web Apps at deploy time once the API's address is known.
+# The frontend is a container rather than static files because Static Web Apps
+# generates its hostname at random and will not let you change it - the site
+# named `iragst-web` answered on `zealous-tree-06f203000`. Container Apps
+# builds the hostname from the app's own name, so the address can say what the
+# thing is. The cost is a cold start on the frontend and a share of the same
+# free compute grant the API uses.
 
 name: Publish image
 
@@ -15,6 +19,7 @@ on:
     branches: [master]
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - '.github/workflows/publish-image.yml'
   workflow_dispatch:
 
@@ -48,7 +53,7 @@ jobs:
         id: owner
         run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push the API
         uses: docker/build-push-action@v6
         with:
           context: ./backend
@@ -65,19 +70,32 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-api:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-api:buildcache,mode=max
 
+      - name: Build and push the frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/gst-web:latest
+            ghcr.io/${{ steps.owner.outputs.name }}/gst-web:${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-web:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ steps.owner.outputs.name }}/gst-web:buildcache,mode=max
+
       - name: Say what to do next
         run: |
           {
-            echo "### Image published"
+            echo "### Images published"
             echo
-            echo '`ghcr.io/${{ github.repository_owner }}/gst-api:latest`'
+            echo '- `ghcr.io/${{ steps.owner.outputs.name }}/gst-api:latest`'
+            echo '- `ghcr.io/${{ steps.owner.outputs.name }}/gst-web:latest`'
             echo
             echo "A package is **private** the first time it is created, even in a"
             echo "public repository. Container Apps cannot pull it until it is made"
-            echo "public, once:"
+            echo "public, once per package:"
             echo
             echo "1. https://github.com/${{ github.repository_owner }}?tab=packages"
-            echo "2. Open **gst-api** → Package settings"
+            echo "2. Open the package → Package settings"
             echo "3. Change visibility → Public"
             echo
             echo "After that every later push publishes without any further step."

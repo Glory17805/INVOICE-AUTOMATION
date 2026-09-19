@@ -301,14 +301,14 @@ def authenticate(email: str, password: str) -> dict:
         raise generic
 
     person = _public(row)
-    # Told apart on purpose: "still waiting" and "switched off" call for
-    # different things from the person reading it. Both are only ever shown
-    # after the password was correct, so neither leaks who has an account.
-    if person["awaiting_approval"]:
-        raise AccountError(
-            "Your account is waiting for an administrator to approve it. "
-            "You will be able to sign in once they do."
-        )
+    # No approval gate: an account that exists can sign in. Who may create one
+    # is decided at signup by `signup_mode` - open to anyone, or closed so that
+    # only an administrator adds people - rather than by leaving someone with
+    # working credentials that do nothing.
+    #
+    # Being switched off is different, and still refused: that is a decision an
+    # administrator made about an existing account. It is only ever shown after
+    # the password was correct, so it does not leak who has an account.
     if not person["is_active"]:
         raise AccountError("This account has been disabled. Ask an administrator.")
 

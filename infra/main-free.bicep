@@ -3,10 +3,17 @@
 //   az deployment group create -g <group> -f infra/main-free.bicep \
 //      -p prefix=iragst githubOwner=Glory17805 dbAdminPassword=<generated>
 //
-// Container Apps for the API, scaling to zero between sessions and staying
-// inside the monthly free grant. Static Web Apps for the frontend, whose Free
-// tier genuinely is free. GitHub Container Registry for the image, so there is
-// no registry bill. Azure Files for the workbooks and PDFs.
+// Container Apps for both halves, each scaling to zero between sessions and
+// staying inside the monthly free grant. GitHub Container Registry for the
+// images, so there is no registry bill. Azure Files for the workbooks and the
+// PDFs.
+//
+// The frontend is a container rather than the obvious Static Web App because
+// that service generates its hostname at random and will not let you change
+// it: a site resource named `iragst-web` answered on `zealous-tree-06f203000`.
+// A Container App's hostname is built from its own name, so the address can
+// say what the thing is. It costs a cold start on the first visit and a share
+// of the same free grant the API uses.
 //
 // The database is a parameter, because which one is free depends on the
 // subscription rather than on anything technical:
@@ -44,17 +51,19 @@ param prefix string = 'iragst'
 @description('Region. Central India keeps Indian tax records in-country.')
 param location string = 'centralindia'
 
-@description('''
-Region for the Static Web App. Separate because Static Web Apps runs in only a
-handful of regions and centralindia is not one of them - a deployment using the
-main location fails on this resource alone. Only the built HTML, CSS and JS
-live here; every invoice, workbook and database row stays in `location`.
-''')
-@allowed([ 'eastus2', 'centralus', 'westus2', 'westeurope', 'eastasia' ])
-param webLocation string = 'eastasia'
-
 @description('GitHub account or org owning the container images on ghcr.io.')
 param githubOwner string
+
+@description('''
+Public name of the frontend, and therefore the first label of the address
+people type. Container Apps builds the hostname from the app's own name, which
+is why the frontend is a container at all: Static Web Apps generates its
+hostname at random and will not let you change it, so a site resource named
+`iragst-web` answered on `zealous-tree-06f203000`.
+''')
+@minLength(3)
+@maxLength(32)
+param webAppName string = 'ira-invoice-automation'
 
 @description('Managed PostgreSQL, or SQLite on the file share. See the note above.')
 @allowed([ 'postgres', 'sqlite' ])
@@ -80,7 +89,6 @@ var storageName = '${prefix}store'
 var shareName = 'data'
 var envName = '${prefix}-env'
 var apiName = '${prefix}-api'
-var webName = '${prefix}-web'
 var dbServerName = '${prefix}-db'
 var dbName = 'gst'
 var imageBase = 'ghcr.io/${toLower(githubOwner)}'
@@ -200,6 +208,15 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
+// Both apps need the other's address - the API to allow its origin, the
+// frontend to call it - which as direct references would be a cycle Bicep
+// refuses. A Container App's hostname is its own name plus the environment's
+// domain, so deriving both from the environment breaks the cycle without
+// hardcoding anything.
+var envDomain = environment.properties.defaultDomain
+var apiFqdn = '${apiName}.${envDomain}'
+var webFqdn = '${webAppName}.${envDomain}'
+
 resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
   parent: environment
   name: 'data'
@@ -225,7 +242,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
         corsPolicy: {
-          allowedOrigins: [ 'https://${web.properties.defaultHostname}' ]
+          allowedOrigins: [ 'https://${webFqdn}' ]
           allowedMethods: [ 'GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS' ]
           allowedHeaders: [ '*' ]
         }
@@ -266,7 +283,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             // Backups matter on both engines - they also cover the workbooks
             // and the archived PDFs, which no database backup touches.
             { name: 'GST_BACKUP_MAX_AGE_MINUTES', value: '60' }
-            { name: 'GST_FRONTEND_ORIGINS', value: 'https://${web.properties.defaultHostname}' }
+            { name: 'GST_FRONTEND_ORIGINS', value: 'https://${webFqdn}' }
             { name: 'GST_APPROVAL_MODE', value: 'flagged_only' }
             { name: 'GST_EXTRACTION_PROVIDER', value: empty(anthropicApiKey) ? 'offline' : 'claude' }
           ],
@@ -324,24 +341,59 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
 // Frontend - Static Web Apps, whose Free tier genuinely is free
 // --------------------------------------------------------------------------
 
-resource web 'Microsoft.Web/staticSites@2023-12-01' = {
-  name: webName
-  location: webLocation
-  sku: {
-    name: 'Free'
-    tier: 'Free'
-  }
+resource web 'Microsoft.App/containerApps@2024-03-01' = {
+  name: webAppName
+  location: location
   properties: {
-    // Content is pushed from the deploy script with the SWA CLI rather than
-    // built by Azure from the repository, because the only build step is
-    // writing config.js and there is no reason to hand Azure a repo token.
-    allowConfigFileUpdates: true
-    stagingEnvironmentPolicy: 'Disabled'
+    managedEnvironmentId: environment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 3000
+        transport: 'auto'
+        allowInsecure: false
+      }
+      secrets: empty(ghcrToken) ? [] : [ { name: 'ghcr-token', value: ghcrToken } ]
+      registries: empty(ghcrToken) ? [] : [
+        {
+          server: 'ghcr.io'
+          username: githubOwner
+          passwordSecretRef: 'ghcr-token'
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'web'
+          image: '${imageBase}/gst-web:latest'
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: [
+            // server.py bakes this into /config.js and into the page's
+            // connect-src at container start, so pointing the frontend at a
+            // different API is a restart rather than a rebuild. The browser
+            // resolves it, so it is the API's public address.
+            { name: 'GST_API_BASE', value: 'https://${apiFqdn}' }
+          ]
+        }
+      ]
+      scale: {
+        // Same shape as the API: nothing running, nothing billed, and one
+        // replica when someone is here. The frontend has no single-writer
+        // constraint of its own - the ceiling is only to stay inside the
+        // shared free grant.
+        minReplicas: 0
+        maxReplicas: 1
+      }
+    }
   }
 }
 
 output apiUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
-output webUrl string = 'https://${web.properties.defaultHostname}'
+output webUrl string = 'https://${web.properties.configuration.ingress.fqdn}'
 output webName string = web.name
 output storageAccount string = storage.name
 output shareName string = shareName

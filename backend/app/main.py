@@ -332,18 +332,20 @@ class Signup(BaseModel):
 def signup(body: Signup, request: Request) -> dict:
     """Create an account from the sign-in page.
 
-    Three cases, in order:
+    Two cases:
 
     - No accounts exist at all. Whoever gets here first becomes the
       administrator, because a fresh install with no way in is worse than a
       first-run signup.
-    - Signup is set to `open`. A working account, signed straight in.
-    - Signup is set to `approval` (the default). The account is created but
-      cannot sign in until an administrator lets it in. The person is told that
-      plainly rather than being handed a password that silently does nothing.
+    - Signup is `open`. A working account, signed straight in.
 
-    Under `closed`, this route refuses. What it never does is decide the policy
-    itself: that is a setting an administrator owns.
+    Under `closed`, this route refuses and an administrator adds people on the
+    Admin screen instead. What it never does is decide the policy itself: that
+    is a setting an administrator owns.
+
+    There is no third, half-open case. An account either works or was never
+    created - a password that exists and silently does nothing is the worst of
+    both, and it is what the removed approval mode handed out.
     """
     first_account = accounts.count_users() == 0
     mode = appsettings.get("signup_mode")
@@ -354,11 +356,9 @@ def signup(body: Signup, request: Request) -> dict:
         )
 
     role = "admin" if first_account else "user"
-    approved = first_account or mode == "open"
 
     try:
-        user = accounts.create_user(body.email, body.name, body.password,
-                                    role=role, approved=approved)
+        user = accounts.create_user(body.email, body.name, body.password, role=role)
     except accounts.AccountError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -367,15 +367,11 @@ def signup(body: Signup, request: Request) -> dict:
     else:
         accounts.record(user, "signup", f"self-registered ({mode})")
 
-    if not approved:
-        # No session: the account exists, and that is all it does so far.
-        return {
-            "pending": True,
-            "user": user,
-            "detail": "Your account has been created and is waiting for an administrator "
-                      "to approve it. You will be able to sign in once they do.",
-        }
-
+    # Signed straight in. An account this route creates always works: the
+    # decision about who may have one is made above, by refusing the request,
+    # rather than below by handing out credentials that do nothing.
+    # `pending` is kept in the response, always false, because an older
+    # frontend still checks it and would otherwise read a missing key as true.
     token = accounts.open_session(user["id"], request.headers.get("User-Agent"))
     return {"token": token, "user": user, "pending": False}
 
