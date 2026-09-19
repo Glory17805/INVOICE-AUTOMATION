@@ -1,0 +1,656 @@
+<title>Ira Invoice Automation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:     #f4f6f8;
+  --surface:    #ffffff;
+  --surface-2:  #eef1f5;
+  --line:       #d9dee6;
+  --line-firm:  #b9c1cd;
+  --ink:        #131a24;
+  --ink-2:      #475365;
+  --ink-3:      #7a8598;
+
+  /* Two meanings, not two decorations: blue is what the machine does,
+     ochre is where a person decides. Every diagram uses them that way. */
+  --machine:      #27508f;
+  --machine-soft: #e3eaf6;
+  --human:        #9a6113;
+  --human-soft:   #f7edda;
+
+  --good:      #16694a;
+  --good-soft: #dcefe6;
+  --stop:      #a33322;
+  --stop-soft: #f8e4e0;
+
+  --display: "Spectral", Georgia, serif;
+  --body:    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono:    "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:     #0f141b;
+    --surface:    #161d27;
+    --surface-2:  #1d2632;
+    --line:       #2b3442;
+    --line-firm:  #3e4a5c;
+    --ink:        #e7ecf2;
+    --ink-2:      #a9b4c4;
+    --ink-3:      #7c8798;
+    --machine:      #7aa5e8;
+    --machine-soft: #1a2740;
+    --human:        #d6a04e;
+    --human-soft:   #33280f;
+    --good:      #5cbf94;
+    --good-soft: #102c22;
+    --stop:      #e08b7a;
+    --stop-soft: #331b17;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:     #0f141b;
+  --surface:    #161d27;
+  --surface-2:  #1d2632;
+  --line:       #2b3442;
+  --line-firm:  #3e4a5c;
+  --ink:        #e7ecf2;
+  --ink-2:      #a9b4c4;
+  --ink-3:      #7c8798;
+  --machine:      #7aa5e8;
+  --machine-soft: #1a2740;
+  --human:        #d6a04e;
+  --human-soft:   #33280f;
+  --good:      #5cbf94;
+  --good-soft: #102c22;
+  --stop:      #e08b7a;
+  --stop-soft: #331b17;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { max-width: 68rem; margin: 0 auto; padding-block: 0 5rem; padding-left: 1.5rem; padding-right: 1.5rem; }
+
+/* ---------- masthead ---------- */
+
+header.top { padding-block: 3.5rem 2rem; border-bottom: 2px solid var(--ink); }
+.kicker {
+  font-family: var(--mono); font-size: .74rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--machine); margin-bottom: .9rem;
+}
+h1 {
+  font-family: var(--display); font-weight: 600;
+  font-size: clamp(2.4rem, 5.5vw, 3.6rem); line-height: 1.05;
+  letter-spacing: -.02em; margin: 0 0 1rem; text-wrap: balance;
+}
+.deck {
+  font-family: var(--display); font-size: clamp(1.05rem, 2vw, 1.25rem);
+  line-height: 1.55; color: var(--ink-2); max-width: 46ch; margin: 0;
+}
+
+.facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 1.6rem 2rem; margin-top: 2.4rem;
+}
+.fact .v {
+  font-family: var(--display); font-size: 1.6rem; font-weight: 600;
+  line-height: 1; display: block; font-variant-numeric: tabular-nums;
+}
+.fact .k {
+  font-family: var(--mono); font-size: .69rem; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-3); margin-top: .45rem; display: block;
+}
+
+/* ---------- sections ---------- */
+
+section { margin-top: 4.2rem; scroll-margin-top: 1rem; }
+
+h2 {
+  font-family: var(--display); font-weight: 600;
+  font-size: 1.85rem; letter-spacing: -.012em; margin: 0 0 .4rem; text-wrap: balance;
+}
+h3 {
+  font-size: 1rem; font-weight: 700; margin: 2rem 0 .4rem; letter-spacing: -.004em;
+}
+.sub { color: var(--ink-2); max-width: 64ch; margin: 0 0 1.6rem; }
+p { max-width: 66ch; }
+p + p { margin-top: .9rem; }
+
+code:not(pre code) {
+  font-family: var(--mono); font-size: .85em;
+  background: var(--surface-2); border: 1px solid var(--line);
+  padding: .08em .34em; border-radius: 3px;
+}
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 1.6rem 0 0; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 1.5rem 1.4rem 1.1rem; overflow-x: auto;
+}
+figure svg { display: block; width: 100%; height: auto; max-width: 100%; }
+figcaption {
+  margin-top: 1.1rem; padding-top: .9rem; border-top: 1px solid var(--line);
+  font-size: .85rem; color: var(--ink-2); line-height: 1.55; max-width: none;
+}
+figcaption b { color: var(--ink); font-weight: 600; }
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: .4rem 1.4rem;
+  margin-top: .9rem; font-size: .78rem; color: var(--ink-2);
+}
+.legend span { display: inline-flex; align-items: center; gap: .42rem; }
+.swatch { width: .8rem; height: .8rem; border-radius: 2px; flex: none; border: 1px solid var(--line-firm); }
+
+/* ---------- tables ---------- */
+
+.scroll { overflow-x: auto; margin-top: 1.2rem; }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 32rem; }
+th {
+  text-align: left; font-family: var(--mono); font-size: .68rem; font-weight: 500;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+  padding: 0 1rem .5rem 0; border-bottom: 1px solid var(--line-firm); white-space: nowrap;
+}
+td { padding: .6rem 1rem .6rem 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+td:first-child { color: var(--ink); font-weight: 500; }
+td.mono, th.mono { font-family: var(--mono); font-size: .82rem; font-variant-numeric: tabular-nums; }
+
+/* ---------- notes ---------- */
+
+.note {
+  margin-top: 1.4rem; padding: 1rem 1.2rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--machine); border-radius: 0 4px 4px 0;
+}
+.note.human { border-left-color: var(--human); }
+.note.stop  { border-left-color: var(--stop); }
+.note h4 {
+  margin: 0 0 .3rem; font-size: .88rem; font-weight: 700; color: var(--ink);
+}
+.note p { margin: 0; font-size: .89rem; color: var(--ink-2); max-width: 68ch; }
+.note p + p { margin-top: .55rem; }
+
+/* ---------- definition rows ---------- */
+
+.rows { margin-top: 1.2rem; border-top: 1px solid var(--line); }
+.row {
+  display: grid; grid-template-columns: 12rem 1fr; gap: 1.4rem;
+  padding: .95rem 0; border-bottom: 1px solid var(--line);
+}
+.row .term { font-weight: 600; font-size: .92rem; }
+.row .term .mono-sub {
+  display: block; font-family: var(--mono); font-size: .74rem;
+  font-weight: 400; color: var(--ink-3); margin-top: .15rem;
+}
+.row .desc { font-size: .9rem; color: var(--ink-2); }
+.row .desc p { margin: 0; max-width: 62ch; }
+.row .desc p + p { margin-top: .5rem; }
+@media (max-width: 680px) { .row { grid-template-columns: 1fr; gap: .3rem; } }
+
+footer {
+  margin-top: 5rem; padding-top: 1.4rem; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--ink-3);
+}
+footer p { max-width: 70ch; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="kicker">System design &middot; September 2026</div>
+  <h1>Ira Invoice Automation</h1>
+  <p class="deck">How a supplier's PDF becomes a row in a GST register &mdash; and where a person still has to decide.</p>
+
+  <div class="facts">
+    <div class="fact"><span class="v">6</span><span class="k">Pipeline stages</span></div>
+    <div class="fact"><span class="v">4</span><span class="k">GST registers</span></div>
+    <div class="fact"><span class="v">4</span><span class="k">Blocking checks</span></div>
+    <div class="fact"><span class="v">365</span><span class="k">Tests</span></div>
+    <div class="fact"><span class="v">&#8377;0</span><span class="k">Monthly cost</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>What the system does</h2>
+  <p class="sub">A small business receives invoices as PDFs and must transcribe each one into a GST workbook &mdash; the right register, the right tax split, the right period. That transcription is mechanical, repetitive and easy to get subtly wrong.</p>
+
+  <p>This system reads the PDF, works out the GST treatment, checks its own answer against four rules, and writes a row into the client's actual Excel workbook &mdash; the same file, the same sheets, the same formula idioms, so a person opening it cannot tell which rows were typed by hand.</p>
+
+  <p>What it deliberately does <em>not</em> do is file anything or decide anything contestable. Every row reaches the workbook because a person pressed <b>Post</b>, and anything the system is unsure about stops and says so.</p>
+
+  <div class="legend">
+    <span><span class="swatch" style="background: var(--machine-soft); border-color: var(--machine)"></span> the machine acts</span>
+    <span><span class="swatch" style="background: var(--human-soft); border-color: var(--human)"></span> a person decides</span>
+    <span><span class="swatch" style="background: var(--good-soft); border-color: var(--good)"></span> written to the workbook</span>
+  </div>
+  <p style="font-size:.85rem; color: var(--ink-3); margin-top:.6rem">These three colours mean the same thing in every diagram below.</p>
+</section>
+
+<section>
+  <h2>How a document moves through it</h2>
+  <p class="sub">Six stages. Five are automatic; the one that writes to the register never is.</p>
+
+  <figure>
+    <svg viewBox="0 0 880 330" role="img" aria-label="Pipeline: an uploaded PDF is read, extracted, checked against GST rules, then either goes straight to Ready or stops at Quick Review; both paths reach the workbook only when a person presses Post.">
+      <defs>
+        <marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+        <marker id="pah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--human)"/>
+        </marker>
+        <marker id="pag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--good)"/>
+        </marker>
+      </defs>
+
+      <!-- stage row -->
+      <g font-family="IBM Plex Sans, sans-serif">
+        <rect x="8"   y="60" width="128" height="56" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="72"  y="82"  text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Upload</text>
+        <text x="72"  y="99"  text-anchor="middle" font-size="10.5" fill="var(--ink-2)">PDF in, split per invoice</text>
+
+        <rect x="172" y="60" width="128" height="56" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="236" y="82"  text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Read</text>
+        <text x="236" y="99"  text-anchor="middle" font-size="10.5" fill="var(--ink-2)">LLM, or offline + OCR</text>
+
+        <rect x="336" y="60" width="128" height="56" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="400" y="82"  text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Extract</text>
+        <text x="400" y="99"  text-anchor="middle" font-size="10.5" fill="var(--ink-2)">fields + line items</text>
+
+        <rect x="500" y="60" width="128" height="56" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="564" y="82"  text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Apply GST</text>
+        <text x="564" y="99"  text-anchor="middle" font-size="10.5" fill="var(--ink-2)">classify + split tax</text>
+
+        <rect x="664" y="60" width="128" height="56" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="728" y="82"  text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Check</text>
+        <text x="728" y="99"  text-anchor="middle" font-size="10.5" fill="var(--ink-2)">four rules, below</text>
+      </g>
+
+      <g stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#pa)">
+        <line x1="136" y1="88" x2="166" y2="88"/>
+        <line x1="300" y1="88" x2="330" y2="88"/>
+        <line x1="464" y1="88" x2="494" y2="88"/>
+        <line x1="628" y1="88" x2="658" y2="88"/>
+      </g>
+
+      <!-- branch -->
+      <g font-family="IBM Plex Sans, sans-serif">
+        <path d="M728 116 L728 150 L300 150 L300 178" stroke="var(--human)" stroke-width="1.4" fill="none" marker-end="url(#pah)"/>
+        <text x="512" y="143" text-anchor="middle" font-size="10.5" fill="var(--human)" font-weight="600">any check fails &rarr; stop</text>
+
+        <path d="M728 116 L728 150 L620 150 L620 178" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#pa)"/>
+        <text x="700" y="168" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">all clean</text>
+
+        <rect x="196" y="178" width="208" height="56" rx="3" fill="var(--human-soft)" stroke="var(--human)" stroke-width="1.4"/>
+        <text x="300" y="200" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Quick Review</text>
+        <text x="300" y="217" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">a person corrects, or overrides</text>
+
+        <rect x="530" y="178" width="180" height="56" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="620" y="200" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Ready</text>
+        <text x="620" y="217" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">waiting to be posted</text>
+      </g>
+
+      <!-- post -->
+      <g font-family="IBM Plex Sans, sans-serif">
+        <path d="M300 234 L300 266 L392 266" stroke="var(--human)" stroke-width="1.4" fill="none" marker-end="url(#pah)"/>
+        <path d="M620 234 L620 266 L528 266" stroke="var(--human)" stroke-width="1.4" fill="none" marker-end="url(#pah)"/>
+        <text x="460" y="258" text-anchor="middle" font-size="10.5" fill="var(--human)" font-weight="600">a person presses Post</text>
+
+        <rect x="392" y="244" width="136" height="44" rx="3" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
+        <text x="460" y="271" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Row in the register</text>
+      </g>
+
+      <g font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-3)">
+        <text x="8" y="40">stage:</text>
+        <text x="72"  y="40" text-anchor="middle">uploaded</text>
+        <text x="236" y="40" text-anchor="middle">reading</text>
+        <text x="400" y="40" text-anchor="middle">extracted</text>
+        <text x="564" y="40" text-anchor="middle">checked</text>
+        <text x="728" y="40" text-anchor="middle">done</text>
+        <text x="460" y="310" text-anchor="middle" fill="var(--good)">status: posted</text>
+      </g>
+
+      <line x1="8" y1="128" x2="872" y2="128" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+      <text x="872" y="143" text-anchor="end" font-size="10" font-family="IBM Plex Sans, sans-serif" fill="var(--ink-3)">below this line, a person is involved</text>
+    </svg>
+    <figcaption><b>The only way into the workbook is through a person.</b> A clean document still waits at <em>Ready</em>; it is never posted automatically. A failed check does not discard anything &mdash; it routes the document to Quick Review with the specific rule that objected, where the reviewer can correct the reading or deliberately override it. An override is recorded against the row with the name of whoever made it.</figcaption>
+  </figure>
+
+  <h3>The four checks that can stop a document</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Check</th><th>What it asks</th><th>Why it blocks</th></tr></thead>
+      <tbody>
+        <tr><td>GSTIN format</td><td>Is each party's GSTIN structurally valid?</td><td>A malformed GSTIN makes the return unfileable.</td></tr>
+        <tr><td>Tax reconciliation</td><td>Does taxable value &times; rate equal the tax the invoice printed?</td><td>A mismatch means the reading is wrong, or the invoice is.</td></tr>
+        <tr><td>Statutory rate</td><td>Is the rate one GST actually levies?</td><td>A rate like 13% is a misread decimal, not a real rate.</td></tr>
+        <tr><td>Duplicate</td><td>Is this invoice number already posted in this period?</td><td>A duplicated row overstates liability or credit.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>The tax decision</h2>
+  <p class="sub">This is the domain rule the whole system exists around, and it turns on one comparison.</p>
+
+  <figure>
+    <svg viewBox="0 0 820 300" role="img" aria-label="The GST split: if the supplier's state code equals the place of supply, tax splits equally into CGST and SGST; otherwise the whole amount goes to IGST.">
+      <defs>
+        <marker id="ta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+      </defs>
+
+      <g font-family="IBM Plex Sans, sans-serif">
+        <rect x="8" y="26" width="220" height="70" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="118" y="50" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Two state codes</text>
+        <text x="118" y="68" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">supplier's GSTIN prefix</text>
+        <text x="118" y="83" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">vs place of supply</text>
+
+        <path d="M228 61 L282 61" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#ta)"/>
+
+        <polygon points="410,18 520,61 410,104 300,61" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.4"/>
+        <text x="410" y="58" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Same state?</text>
+        <text x="410" y="74" text-anchor="middle" font-size="10" fill="var(--ink-2)">27 vs 27</text>
+
+        <path d="M410 104 L410 140 L210 140 L210 168" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#ta)"/>
+        <text x="300" y="133" text-anchor="middle" font-size="11" font-weight="600" fill="var(--good)">yes &mdash; intra-state</text>
+
+        <path d="M410 104 L410 140 L620 140 L620 168" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#ta)"/>
+        <text x="530" y="133" text-anchor="middle" font-size="11" font-weight="600" fill="var(--human)">no &mdash; inter-state</text>
+
+        <rect x="60" y="168" width="300" height="94" rx="3" fill="var(--surface)" stroke="var(--good)" stroke-width="1.4"/>
+        <text x="210" y="191" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">CGST + SGST</text>
+        <text x="210" y="213" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">CGST = taxable &times; rate &divide; 2</text>
+        <text x="210" y="230" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">SGST = taxable &times; rate &divide; 2</text>
+        <text x="210" y="251" text-anchor="middle" font-size="10" fill="var(--ink-3)">split between centre and state</text>
+
+        <rect x="470" y="168" width="300" height="94" rx="3" fill="var(--surface)" stroke="var(--human)" stroke-width="1.4"/>
+        <text x="620" y="191" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">IGST only</text>
+        <text x="620" y="213" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">IGST = taxable &times; rate</text>
+        <text x="620" y="230" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">CGST = SGST = 0</text>
+        <text x="620" y="251" text-anchor="middle" font-size="10" fill="var(--ink-3)">the whole amount, undivided</text>
+      </g>
+
+      <text x="414" y="288" text-anchor="middle" font-size="10.5" font-family="IBM Plex Sans, sans-serif" fill="var(--ink-3)">the system recomputes both sides and compares them against what the invoice printed</text>
+    </svg>
+    <figcaption><b>The split is recomputed, not copied.</b> The reader extracts whatever tax figures the invoice shows, and the system independently derives what they <em>should</em> be from the taxable value, the rate and the two state codes. When the two disagree, the document stops. That is the tax-reconciliation check, and it is what catches a misread decimal point before it reaches a return.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Where a row lands</h2>
+  <p class="sub">Four registers, chosen by what kind of document arrived.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Document</th><th>Sheet</th><th class="mono">Data starts</th><th>What it records</th></tr></thead>
+      <tbody>
+        <tr><td>Sales invoice</td><td>GSTR-1</td><td class="mono">row 8</td><td>Outward supplies &mdash; tax you owe.</td></tr>
+        <tr><td>Purchase invoice</td><td>GSTR-2B</td><td class="mono">row 7</td><td>Inward supplies &mdash; credit you can claim.</td></tr>
+        <tr><td>Credit note</td><td>Credit Note</td><td class="mono">row 6</td><td>Reductions against an earlier supply.</td></tr>
+        <tr><td>Reverse charge</td><td>RCM</td><td class="mono">row 8</td><td>Supplies where the recipient pays the tax.</td></tr>
+        <tr><td>&mdash;</td><td>Tax Payable</td><td class="mono">formulas</td><td>The netting sheet. Never written directly.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <h4>The workbook's own idiom</h4>
+    <p>A posted row carries the same formula patterns as the rows a person typed, and the sheet's own number formats. When a register grows past its totals row, the totals row is moved down and every <code>Tax Payable</code> formula that pointed at the old position is repointed &mdash; openpyxl does not adjust formulas when rows are inserted, so the system does it explicitly.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Architecture</h2>
+  <p class="sub">Two containers, a file share, and a database that cannot live on it.</p>
+
+  <figure>
+    <svg viewBox="0 0 880 430" role="img" aria-label="Deployment: a browser loads the frontend container and calls the API container; the API keeps SQLite on its own local disk and mirrors it to Azure Files, which also holds the workbooks and archived PDFs; both container images are pulled from GitHub Container Registry.">
+      <defs>
+        <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+        <marker id="aam" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--machine)"/>
+        </marker>
+      </defs>
+
+      <g font-family="IBM Plex Sans, sans-serif">
+        <rect x="330" y="10" width="200" height="42" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="430" y="36" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Browser</text>
+
+        <path d="M430 52 L430 84" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#aa)"/>
+        <text x="442" y="72" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">https</text>
+
+        <!-- environment box -->
+        <rect x="24" y="84" width="832" height="128" rx="4" fill="none" stroke="var(--line-firm)" stroke-width="1.2" stroke-dasharray="4 4"/>
+        <text x="38" y="103" font-size="9.5" font-family="IBM Plex Mono, monospace" letter-spacing="1" fill="var(--ink-3)">CONTAINER APPS ENVIRONMENT &mdash; CENTRAL INDIA</text>
+
+        <rect x="120" y="116" width="230" height="74" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.4"/>
+        <text x="235" y="140" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">ira-invoice-automation</text>
+        <text x="235" y="157" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">static page + assets</text>
+        <text x="235" y="176" text-anchor="middle" font-size="9.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">0&ndash;1 replica &middot; sleeps when idle</text>
+
+        <rect x="530" y="116" width="230" height="74" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.4"/>
+        <text x="645" y="140" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">iragst-api</text>
+        <text x="645" y="157" text-anchor="middle" font-size="10.5" fill="var(--ink-2)">FastAPI + Tesseract</text>
+        <text x="645" y="176" text-anchor="middle" font-size="9.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">exactly 1 replica, never 2</text>
+
+        <path d="M350 153 L524 153" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#aa)"/>
+        <text x="437" y="146" text-anchor="middle" font-size="10" fill="var(--ink-2)">JSON over https, CORS-pinned</text>
+
+        <!-- storage -->
+        <rect x="530" y="250" width="230" height="64" rx="3" fill="var(--surface)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="645" y="273" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Container local disk</text>
+        <text x="645" y="292" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">SQLite &mdash; live database</text>
+        <text x="645" y="306" text-anchor="middle" font-size="9.5" fill="var(--stop)">lost when the container stops</text>
+
+        <rect x="150" y="250" width="270" height="110" rx="3" fill="var(--surface)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="285" y="273" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Azure Files share</text>
+        <text x="285" y="293" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">workbook/ &mdash; period registers</text>
+        <text x="285" y="309" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">archive/ &mdash; source PDFs</text>
+        <text x="285" y="325" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">store.db &mdash; database mirror</text>
+        <text x="285" y="345" text-anchor="middle" font-size="9.5" fill="var(--good)">survives everything</text>
+
+        <path d="M645 190 L645 244" stroke="var(--machine)" stroke-width="1.3" fill="none" marker-end="url(#aam)"/>
+        <text x="656" y="221" font-size="10" fill="var(--machine)">reads / writes</text>
+
+        <path d="M570 250 L430 250" stroke="var(--machine)" stroke-width="1.3" fill="none" marker-end="url(#aam)" stroke-dasharray="5 3"/>
+        <text x="500" y="242" text-anchor="middle" font-size="10" font-weight="600" fill="var(--machine)">mirror</text>
+        <text x="500" y="230" text-anchor="middle" font-size="9" fill="var(--ink-3)">every 120s, after each post, on shutdown</text>
+
+        <path d="M430 288 L524 288" stroke="var(--machine)" stroke-width="1.3" fill="none" marker-end="url(#aam)" stroke-dasharray="5 3"/>
+        <text x="477" y="303" text-anchor="middle" font-size="9.5" fill="var(--machine)">restore at start</text>
+
+        <path d="M560 160 L470 160" stroke="none" fill="none"/>
+        <path d="M285 190 L285 244" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#aa)"/>
+        <text x="296" y="221" font-size="10" fill="var(--ink-3)">workbook writes</text>
+
+        <!-- registry -->
+        <rect x="24" y="116" width="76" height="74" rx="3" fill="var(--surface)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="62" y="146" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ink)">ghcr.io</text>
+        <text x="62" y="163" text-anchor="middle" font-size="9" fill="var(--ink-2)">images</text>
+        <text x="62" y="177" text-anchor="middle" font-size="9" fill="var(--ink-3)">free</text>
+        <path d="M100 153 L114 153" stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#aa)"/>
+      </g>
+
+      <g font-family="IBM Plex Sans, sans-serif">
+        <rect x="24" y="382" width="832" height="38" rx="3" fill="var(--human-soft)" stroke="var(--human)" stroke-width="1.2"/>
+        <text x="40" y="406" font-size="11" fill="var(--ink)"><tspan font-weight="700">Why the database is not on the share:</tspan> Azure Files does not honour the byte-range locks SQLite needs &mdash; even creating an empty schema fails with &#8220;database is locked&#8221;.</text>
+      </g>
+    </svg>
+    <figcaption><b>The split exists because one store cannot do both jobs.</b> The file share is durable but cannot host a database; the container's disk is a real filesystem but disappears. So SQLite runs locally and is copied across as bytes &mdash; a plain file copy needs no locks. The workbooks and archived PDFs go straight to the share, which is why a filed return never depends on the mirror.</figcaption>
+  </figure>
+
+  <div class="note stop">
+    <h4>Exactly one replica, permanently</h4>
+    <p>This is a correctness constraint, not a cost saving. Two processes appending to the same register would each write at what it believed was the first free row, and the second save would win &mdash; a silently lost tax record. The application takes a kernel lock on its data directory so a second process fails loudly rather than corrupting quietly, and the deployment caps replicas at one.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What moves, and where it comes to rest</h2>
+  <p class="sub">Following one invoice from upload to filed row, and what is left behind at each point.</p>
+
+  <figure>
+    <svg viewBox="0 0 880 360" role="img" aria-label="Data flow: a PDF is stored and split, text is extracted by an LLM or the offline reader, producing structured invoice fields, then a GST treatment, then a register row in the workbook and an archived PDF; the queue, audit trail and accounts live in the database.">
+      <defs>
+        <marker id="da" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+        </marker>
+      </defs>
+
+      <g font-family="IBM Plex Sans, sans-serif">
+        <!-- flow spine -->
+        <rect x="8" y="96" width="120" height="58" rx="3" fill="var(--surface-2)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="68" y="119" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">PDF</text>
+        <text x="68" y="136" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">as it arrived</text>
+
+        <rect x="172" y="96" width="140" height="58" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="242" y="119" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Text</text>
+        <text x="242" y="136" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">text layer, or OCR</text>
+
+        <rect x="356" y="96" width="150" height="58" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="431" y="119" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Invoice fields</text>
+        <text x="431" y="136" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">parties, GSTINs, amounts</text>
+
+        <rect x="550" y="96" width="150" height="58" rx="3" fill="var(--machine-soft)" stroke="var(--machine)" stroke-width="1.3"/>
+        <text x="625" y="119" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">GST treatment</text>
+        <text x="625" y="136" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">register + tax split</text>
+
+        <rect x="744" y="96" width="128" height="58" rx="3" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
+        <text x="808" y="119" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Register row</text>
+        <text x="808" y="136" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">in the workbook</text>
+
+        <g stroke="var(--ink-3)" stroke-width="1.2" fill="none" marker-end="url(#da)">
+          <line x1="128" y1="125" x2="166" y2="125"/>
+          <line x1="312" y1="125" x2="350" y2="125"/>
+          <line x1="506" y1="125" x2="544" y2="125"/>
+          <line x1="700" y1="125" x2="738" y2="125"/>
+        </g>
+        <text x="147" y="116" text-anchor="middle" font-size="9" fill="var(--ink-3)">split</text>
+        <text x="331" y="116" text-anchor="middle" font-size="9" fill="var(--ink-3)">read</text>
+        <text x="525" y="116" text-anchor="middle" font-size="9" fill="var(--ink-3)">classify</text>
+        <text x="719" y="116" text-anchor="middle" font-size="9" fill="var(--ink-3)">post</text>
+
+        <!-- stores below -->
+        <rect x="150" y="238" width="250" height="78" rx="3" fill="var(--surface)" stroke="var(--line-firm)" stroke-width="1.2"/>
+        <text x="275" y="261" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Database</text>
+        <text x="275" y="279" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">queue &middot; accounts &middot; sessions</text>
+        <text x="275" y="294" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">audit trail &middot; settings</text>
+        <text x="275" y="309" text-anchor="middle" font-size="9" fill="var(--ink-3)">mirrored to the share</text>
+
+        <rect x="500" y="238" width="250" height="78" rx="3" fill="var(--surface)" stroke="var(--good)" stroke-width="1.3"/>
+        <text x="625" y="261" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">File share</text>
+        <text x="625" y="279" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">period workbooks</text>
+        <text x="625" y="294" text-anchor="middle" font-size="9.5" fill="var(--ink-2)">archived source PDFs</text>
+        <text x="625" y="309" text-anchor="middle" font-size="9" fill="var(--good)">the irreplaceable half</text>
+
+        <g stroke="var(--ink-3)" stroke-width="1.1" fill="none" marker-end="url(#da)" stroke-dasharray="4 3">
+          <path d="M68 154 L68 200 L275 200 L275 232"/>
+          <path d="M431 154 L431 210 L290 210 L290 232"/>
+          <path d="M808 154 L808 200 L625 200 L625 232"/>
+          <path d="M68 154 L68 190 L610 190 L610 232"/>
+        </g>
+        <text x="180" y="196" text-anchor="middle" font-size="9" fill="var(--ink-3)">every state change</text>
+        <text x="742" y="196" text-anchor="middle" font-size="9" fill="var(--ink-3)">row + archived PDF</text>
+      </g>
+
+      <text x="440" y="342" text-anchor="middle" font-size="10.5" font-family="IBM Plex Sans, sans-serif" fill="var(--ink-3)">losing the database costs the queue and the audit trail; losing the share costs the filings themselves</text>
+    </svg>
+    <figcaption><b>The two halves are not equally precious.</b> The workbooks and the archived PDFs are the filing history and have no second copy anywhere &mdash; they are written straight to durable storage. The database holds work-in-progress and the record of who did what; it is mirrored every two minutes and immediately after each post, so the worst case is losing a few minutes of queue activity, not a return.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Design decisions</h2>
+  <p class="sub">The choices that shaped the system, and the reasoning that is easy to lose.</p>
+
+  <div class="rows">
+    <div class="row">
+      <div class="term">Write into the client's own workbook<span class="mono-sub">workbook.py</span></div>
+      <div class="desc"><p>Not a new file, not a CSV export. The accountant already has a workbook with formulas, formats and a Tax Payable sheet that nets everything off. Producing a different artefact would mean somebody re-typing from it.</p></div>
+    </div>
+    <div class="row">
+      <div class="term">Never post automatically<span class="mono-sub">pipeline.confirm</span></div>
+      <div class="desc"><p>Even a document that passes every check waits at Ready. The system's judgement about an invoice is good enough to prepare a row and not good enough to file one.</p></div>
+    </div>
+    <div class="row">
+      <div class="term">Recompute the tax rather than trust it<span class="mono-sub">gst/rules.py</span></div>
+      <div class="desc"><p>The reader extracts the printed figures; the rules derive what they should be. Agreement is evidence; disagreement stops the document. A reader that simply copied numbers could not catch its own misreadings.</p></div>
+    </div>
+    <div class="row">
+      <div class="term">Read offline when there is no model<span class="mono-sub">extract/heuristic.py</span></div>
+      <div class="desc"><p>Without an API key the system parses the text layer itself, with OCR for scans. It never guesses: anything unreadable stays empty and the document goes to Quick Review rather than being auto-confirmed.</p></div>
+    </div>
+    <div class="row">
+      <div class="term">Back up before posting<span class="mono-sub">backup.py</span></div>
+      <div class="desc"><p>Posting is the one irreversible step, so a verified archive is taken first &mdash; rate-limited to one an hour, because clearing a morning's queue is thirty posts and thirty archives buy no more safety than the first.</p></div>
+    </div>
+    <div class="row">
+      <div class="term">Save the register by replacing it<span class="mono-sub">workbook._save</span></div>
+      <div class="desc"><p>The new workbook is written beside the old one and renamed into place. A rename is atomic, so a process that dies mid-save leaves one version or the other &mdash; never half a register.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What runs it</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Layer</th><th>Choice</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Backend</td><td>Python 3.12, FastAPI, uvicorn</td><td>Single worker, by design.</td></tr>
+        <tr><td>Frontend</td><td>Vanilla JS, no build step</td><td>Served by a Python standard-library server.</td></tr>
+        <tr><td>Workbook</td><td>openpyxl</td><td>Preserves formulas and number formats.</td></tr>
+        <tr><td>Reading</td><td>Claude or Gemini; offline fallback</td><td>Tesseract OCR for scans.</td></tr>
+        <tr><td>Database</td><td>SQLite, or PostgreSQL when configured</td><td>One schema template, three dialect differences.</td></tr>
+        <tr><td>Hosting</td><td>Azure Container Apps, scale to zero</td><td>Free grant covers roughly 3 hours a day.</td></tr>
+        <tr><td>Images</td><td>GitHub Container Registry</td><td>Built by Actions, no secrets required.</td></tr>
+        <tr><td>Tests</td><td>365, on both database engines</td><td>Workbook tests need the real file and skip in CI.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Known limits</h2>
+  <p class="sub">Stated rather than discovered later.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Limit</th><th>Consequence</th></tr></thead>
+      <tbody>
+        <tr><td>Cold start</td><td>The first request after an idle spell takes ten to twenty seconds. That is what keeps the hosting free.</td></tr>
+        <tr><td>Mirror window</td><td>An ungraceful container kill loses up to two minutes of queue and audit changes. Filings are unaffected.</td></tr>
+        <tr><td>Single instance</td><td>No redundancy; a restart is a brief outage. Inherent to writing one shared workbook.</td></tr>
+        <tr><td>Reader quality</td><td>Running offline, extraction is materially weaker than the LLM path and more rows stop at review.</td></tr>
+        <tr><td>GST scope</td><td>Zero-rated supplies, mixed-rate invoices and credit-note linkage are not modelled yet.</td></tr>
+        <tr><td>No staging</td><td>A bad image reaches the only environment. Images are tagged per commit, so rollback means pointing at a tag.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <p>Ira Invoice Automation &mdash; a personal project. Source at <code>Glory17805/INVOICE-AUTOMATION</code>. The master workbook and every invoice stay outside the repository.</p>
+</footer>
+
+</div>
