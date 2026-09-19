@@ -44,7 +44,21 @@ jobs:
         # deliberately not in the repository. Printing why keeps a green tick
         # from being read as "everything was checked".
         working-directory: backend
-        run: python -m pytest tests -ra
+        # Output is teed into the job summary as well as the log. Two failures
+        # here could not be reproduced locally - not on Windows, not in a
+        # Linux container matching this job, not against either engine - and
+        # reading the log needs a token, so the one place the evidence existed
+        # was the one place it could not be read. A summary is public.
+        run: |
+          set -o pipefail
+          python -m pytest tests -ra --tb=short 2>&1 | tee /tmp/pytest.txt || status=$?
+          {
+            echo "### Test output"
+            echo '```'
+            tail -60 /tmp/pytest.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
 
       - name: Say what this run did not cover
         if: always()

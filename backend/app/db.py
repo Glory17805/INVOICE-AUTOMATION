@@ -39,6 +39,7 @@ production - and keeps the UNIQUE constraint case-insensitive too.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
@@ -47,6 +48,8 @@ from pathlib import Path
 from threading import RLock
 
 from .config import STORE_PATH, ensure_dirs
+
+log = logging.getLogger("gst.db")
 
 # Serialises writers within this process. Both engines handle cross-process
 # locking themselves, and the backend is single-instance by design anyway
@@ -269,6 +272,22 @@ def _migrate(connection, name: str) -> None:
     for table, column, definition in _ADDED_COLUMNS:
         if column not in _columns(connection, table, name):
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    _release_pending_accounts(connection)
+
+
+def _release_pending_accounts(connection) -> None:
+    """Let in anyone left waiting when the approval gate was removed.
+
+    The gate is gone, so nothing will ever approve these rows - without this
+    they would be accounts that exist, hold a correct password, and refuse to
+    sign in for ever, with nothing in the interface able to fix them.
+
+    The column stays. Dropping it would rewrite the users table, and it costs
+    nothing to leave a column that is now always 1.
+    """
+    released = connection.execute("UPDATE users SET approved = 1 WHERE approved = 0").rowcount
+    if released:
+        log.info("Approval gate removed: let in %d account(s) that were waiting.", released)
 
 
 def _columns(connection, table: str, name: str) -> set[str]:

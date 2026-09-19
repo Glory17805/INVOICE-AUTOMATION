@@ -109,61 +109,57 @@ def test_a_disabled_account_cannot_sign_in(isolated_accounts):
 
 
 # --------------------------------------------------------------------------- #
-# Self-signup and approval
+# Self-signup
+#
+# There is no approval gate. An account either works or was never created:
+# holding credentials that silently do nothing is indistinguishable, to the
+# person holding them, from a system that is broken.
 # --------------------------------------------------------------------------- #
 
-def test_an_unapproved_account_cannot_sign_in(isolated_accounts):
-    """The whole point of the approval policy: the account exists and does
-    nothing until somebody says so."""
-    accounts.create_user("new@b.com", "New", "a decent long password", approved=False)
-    with pytest.raises(accounts.AccountError, match="waiting for an administrator"):
-        accounts.authenticate("new@b.com", "a decent long password")
+def test_a_new_account_can_sign_in_immediately(isolated_accounts):
+    accounts.create_user("new@b.com", "New", "a decent long password")
+    assert accounts.authenticate("new@b.com", "a decent long password")["email"] == "new@b.com"
 
 
-def test_waiting_and_switched_off_are_told_apart(isolated_accounts):
-    """Both mean "cannot sign in" and they call for different things, so the
-    person reading the message must be able to tell which one they are in."""
-    accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
-    waiting = accounts.create_user("wait@b.com", "Wait", "a decent long password", approved=False)
+def test_an_account_left_waiting_by_the_old_gate_can_now_sign_in(isolated_accounts):
+    """Rows written before the gate was removed must not be stranded.
+
+    Nothing approves them any more, so without the migration in `db._migrate`
+    they would be accounts that exist, hold the right password, and refuse to
+    sign in for ever, with nothing in the interface able to repair them.
+    """
+    person = accounts.create_user("old@b.com", "Old", "a decent long password")
+    with db.LOCK, db.connect() as c:
+        c.execute("UPDATE users SET approved = 0 WHERE id = ?", (person["id"],))
+
+    db.forget()   # force the schema/migration pass to run again
+    with db.LOCK, db.connect() as c:
+        pass
+
+    assert accounts.authenticate("old@b.com", "a decent long password")["id"] == person["id"]
+
+
+def test_being_switched_off_still_refuses(isolated_accounts):
+    """Removing the approval gate must not remove the one that matters: an
+    administrator disabling an account is a decision about a real account."""
     disabled = accounts.create_user("off@b.com", "Off", "a decent long password")
     accounts.update_user(disabled["id"], is_active=False)
-
-    with pytest.raises(accounts.AccountError) as pending:
-        accounts.authenticate("wait@b.com", "a decent long password")
-    with pytest.raises(accounts.AccountError) as switched_off:
+    with pytest.raises(accounts.AccountError, match="disabled"):
         accounts.authenticate("off@b.com", "a decent long password")
 
-    assert "approve" in str(pending.value)
-    assert "disabled" in str(switched_off.value)
-    assert waiting["awaiting_approval"] is True
 
-
-def test_approving_lets_them_in(isolated_accounts):
-    person = accounts.create_user("new@b.com", "New", "a decent long password", approved=False)
-    accounts.approve_user(person["id"])
-    assert accounts.authenticate("new@b.com", "a decent long password")["id"] == person["id"]
-
-
-def test_pending_users_lists_only_those_waiting(isolated_accounts):
-    accounts.create_user("in@b.com", "In", "a decent long password")
-    waiting = accounts.create_user("wait@b.com", "Wait", "a decent long password", approved=False)
-    assert [u["id"] for u in accounts.pending_users()] == [waiting["id"]]
-
-
-def test_an_unapproved_admin_is_not_a_way_back_in(isolated_accounts):
+def test_a_disabled_admin_is_not_a_way_back_in(isolated_accounts):
     """Demoting the only usable admin must not be allowed just because another
-    admin row exists that nobody has approved - that account cannot sign in."""
+    admin row exists that is switched off - that account cannot sign in."""
     boss = accounts.create_user("boss@b.com", "Boss", "a decent long password", role="admin")
-    accounts.create_user("ghost@b.com", "Ghost", "a decent long password",
-                         role="admin", approved=False)
+    ghost = accounts.create_user("ghost@b.com", "Ghost", "a decent long password", role="admin")
+    accounts.update_user(ghost["id"], is_active=False)
 
     with pytest.raises(accounts.AccountError, match="only active administrator"):
         accounts.update_user(boss["id"], role="user")
 
 
-def test_existing_accounts_are_approved_by_default(isolated_accounts):
-    """The column was added after release; everyone who already had an account
-    keeps it rather than being locked out by a migration."""
+def test_accounts_are_created_ready_to_use(isolated_accounts):
     created = accounts.create_user("a@b.com", "A", "a decent long password")
     assert created["approved"] is True
     assert created["awaiting_approval"] is False
@@ -737,17 +733,29 @@ def test_recording_a_read_never_raises(isolated_store, monkeypatch):
     assert runtime.last_read("gemini", True) is None         # nor must reading it
 
 
-def test_signup_mode_defaults_to_needing_approval(isolated_store):
-    """The link exists and works; what it does not do is hand out access to a
-    company's filed returns to whoever finds the page."""
-    assert appsettings.all_settings()["signup_mode"] == "approval"
+def test_signup_mode_defaults_to_open(isolated_store):
+    """Open by default, because the alternative is a fresh install nobody can
+    get into. Closed is the setting to reach for once the people who need
+    accounts have them."""
+    assert appsettings.all_settings()["signup_mode"] == "open"
 
 
-def test_signup_mode_accepts_only_the_three_policies(isolated_store):
-    for mode in ("approval", "open", "closed"):
+def test_signup_mode_accepts_only_the_two_policies(isolated_store):
+    for mode in ("open", "closed"):
         assert appsettings.update({"signup_mode": mode})["signup_mode"] == mode
     with pytest.raises(ValueError, match="Signup mode must be one of"):
         appsettings.update({"signup_mode": "everyone-welcome"})
+
+
+def test_the_retired_approval_mode_reads_as_open(isolated_store):
+    """A database written before the gate was removed still holds "approval".
+
+    Refusing it would leave the settings screen unable to load, so an
+    administrator could not even change it - a stored value the validator
+    rejects locks the door it is standing in front of.
+    """
+    assert appsettings.update({"signup_mode": "approval"})["signup_mode"] == "open"
+    assert appsettings.all_settings()["signup_mode"] == "open"
 
 
 def test_an_unknown_setting_is_refused_rather_than_stored(isolated_store):

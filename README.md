@@ -175,13 +175,18 @@ does is an administrator's choice — *Settings → Who can create an account*:
 
 | Policy | What happens |
 |---|---|
-| **Anyone can ask; an administrator approves** *(default)* | The account is created but cannot sign in. It appears under *Waiting to be let in* on the Admin screen, where it is approved — as a user or an administrator — or rejected. The person is told plainly that they are waiting, rather than being handed a password that silently does nothing. |
-| **Anyone can create a working account** | Signed straight in, as a user. |
+| **Anyone can create a working account** *(default)* | Signed straight in, as a user. |
 | **No signup link** | Administrators add people from the Admin screen. |
 
-The default is approval rather than open because this system holds a company's
-filed returns: the link is there and it works, but it does not hand out access
-to those records to whoever finds the page.
+There is no third, half-open policy. An account either works or was never
+created: someone holding credentials that silently do nothing cannot tell that
+apart from a system that is broken.
+
+That makes **No signup link** the setting to reach for once the people who need
+accounts have them — this holds a company's filed returns, and open signup is
+only appropriate while the page is reachable by people who should have access,
+such as a laptop or an office network. An administrator can also switch an
+existing account off, which does refuse sign-in.
 
 There are two roles. **Users** upload, review and post. **Administrators** also
 manage people, change processing settings, and reset a return period.
