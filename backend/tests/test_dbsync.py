@@ -123,6 +123,38 @@ def test_an_interrupted_push_cannot_replace_a_good_mirror(mirrored, monkeypatch)
     assert not remote.with_name(remote.name + ".partial").exists()
 
 
+def test_sqlite_is_never_opened_on_the_mirror(mirrored, monkeypatch):
+    """The mirror must only ever be written as bytes, never as a database.
+
+    This is the bug the live deployment found and the local one could not:
+    pointing SQLite's backup straight at the share produced a zero-byte file
+    on every push, silently, because writing a database to Azure Files needs
+    the same locks reading one there does. A Docker volume stands in for the
+    share in every other test and is a real filesystem, so it happily accepted
+    what Azure refuses.
+
+    Asserting on the paths SQLite is asked to open is white-box, and it is the
+    only way to state the constraint that actually matters.
+    """
+    _, remote = mirrored
+    accounts.create_user("bytes@ira.test", "Bytes", "a-long-enough-passphrase-7")
+
+    opened: list[str] = []
+    real_connect = sqlite3.connect
+
+    def watching(target, *args, **kwargs):
+        opened.append(str(target))
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(dbsync.sqlite3, "connect", watching)
+    assert dbsync.push("test") is True
+
+    mirror_dir = str(remote.parent)
+    on_the_mirror = [p for p in opened if p.startswith(mirror_dir)]
+    assert not on_the_mirror, f"SQLite was opened on the mirror: {on_the_mirror}"
+    assert remote.stat().st_size > 0
+
+
 def test_a_failing_push_never_stops_the_caller(mirrored, monkeypatch):
     """Posting must not fail because the share is unreachable."""
     _, remote = mirrored

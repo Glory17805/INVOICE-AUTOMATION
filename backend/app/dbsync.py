@@ -107,11 +107,21 @@ def pull() -> None:
 def push(reason: str = "") -> bool:
     """Write a consistent snapshot of the live database to durable storage.
 
-    Through SQLite's own backup API rather than a file copy, because this runs
-    while the application is serving: a byte-for-byte copy of a database being
-    written to can land mid-transaction and restore as corrupt.
+    Two steps, and the order is the whole point.
 
-    Writes to a temporary name on the share and moves it into place, so a push
+    First a SQLite backup from the live database to a second file **on local
+    disk**. Through the backup API rather than a file copy because this runs
+    while the application is serving, and a byte-for-byte copy of a database
+    being written to can land mid-transaction and restore as corrupt.
+
+    Then a plain byte copy of that snapshot onto the share. This is the step
+    that must not be a SQLite operation: writing a database *to* Azure Files
+    needs the same locks reading one there does, and they are exactly what the
+    share does not provide. An earlier version pointed the backup straight at
+    the share and produced a zero-byte file every time - silently, because the
+    failure is a lock that never arrives rather than an error.
+
+    The copy lands on a temporary name and is moved into place, so a push
     interrupted halfway cannot leave a half-written mirror where a good one
     was.
     """
@@ -123,27 +133,42 @@ def push(reason: str = "") -> bool:
     if not local.exists():
         return False
 
+    snapshot = local.with_name(local.name + ".snapshot")
     staging = target.with_name(target.name + ".partial")
     with _lock:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
+
+            snapshot.unlink(missing_ok=True)
             live = sqlite3.connect(str(local))
-            copy = sqlite3.connect(str(staging))
+            copy = sqlite3.connect(str(snapshot))
             try:
                 live.backup(copy)
             finally:
                 copy.close()
                 live.close()
+
+            if snapshot.stat().st_size == 0:
+                raise RuntimeError("the snapshot came out empty")
+
+            shutil.copyfile(snapshot, staging)
             os.replace(staging, target)
-            log.debug("Mirrored the database to %s%s", target, f" ({reason})" if reason else "")
+            log.info("Mirrored %s bytes to %s%s", target.stat().st_size, target,
+                     f" ({reason})" if reason else "")
             return True
         except Exception:
             log.exception("Could not mirror the database to %s", target)
+            for debris in (staging,):
+                try:
+                    debris.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return False
+        finally:
             try:
-                staging.unlink(missing_ok=True)
+                snapshot.unlink(missing_ok=True)
             except OSError:
                 pass
-            return False
 
 
 def start() -> None:
